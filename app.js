@@ -12,8 +12,29 @@
     var musicOn = false;
     var musicNextStepTime = 0;
     var musicStepIndex = 0;
-    var MUSIC_STEP = 60 / 132 / 2;
-    var MUSIC_PATTERN = [196, 0, 233, 0, 196, 0, 175, 0, 196, 0, 233, 0, 262, 0, 233, 0];
+    var musicBus = null;
+
+    // Warm pastoral loop: a G-Em-C-D folk progression across 4 bars of eighth
+    // notes, split into bass / melody / offbeat pluck layers and run through a
+    // lowpass so it reads as gentle Americana rather than chiptune.
+    var MUSIC_BPM = 92;
+    var MUSIC_STEP = 60 / MUSIC_BPM / 2;
+    var STEPS_PER_BAR = 8;
+    var MUSIC_LEN = STEPS_PER_BAR * 4;
+
+    var BASS_ROOTS = [98.00, 82.41, 65.41, 73.42];
+    var CHORD_TONES = [
+      [196.00, 246.94, 293.66],
+      [164.81, 196.00, 246.94],
+      [130.81, 164.81, 196.00],
+      [146.83, 220.00, 293.66]
+    ];
+    var MELODY = [
+      392.00, 0, 329.63, 0, 293.66, 0, 0, 0,
+      329.63, 0, 293.66, 0, 246.94, 0, 0, 0,
+      329.63, 0, 261.63, 0, 293.66, 0, 0, 0,
+      293.66, 0, 246.94, 0, 220.00, 0, 246.94, 0
+    ];
 
     function ensure() {
       if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -68,6 +89,36 @@
       src.start();
     }
 
+    function musicOut() {
+      var a = ensure();
+      if (!musicBus) {
+        var filter = a.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 2200;
+        var g = a.createGain();
+        g.gain.value = 0.9;
+        filter.connect(g);
+        g.connect(a.destination);
+        musicBus = filter;
+      }
+      return musicBus;
+    }
+
+    function musicNote(freq, time, dur, type, vol) {
+      var a = ensure();
+      var osc = a.createOscillator();
+      var gain = a.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, time);
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(vol, time + Math.min(0.05, dur * 0.3));
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+      osc.connect(gain);
+      gain.connect(musicOut());
+      osc.start(time);
+      osc.stop(time + dur + 0.02);
+    }
+
     function startMusic() {
       if (musicOn) return;
       musicOn = true;
@@ -78,20 +129,22 @@
     function tickMusic() {
       if (!musicOn) return;
       var a = ensure();
-      while (musicNextStepTime < a.currentTime + 0.2) {
-        var freq = MUSIC_PATTERN[musicStepIndex % MUSIC_PATTERN.length];
-        if (freq > 0) {
-          var osc = a.createOscillator();
-          var gain = a.createGain();
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(freq, musicNextStepTime);
-          gain.gain.setValueAtTime(0.04, musicNextStepTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, musicNextStepTime + MUSIC_STEP * 0.9);
-          osc.connect(gain);
-          gain.connect(a.destination);
-          osc.start(musicNextStepTime);
-          osc.stop(musicNextStepTime + MUSIC_STEP);
+      while (musicNextStepTime < a.currentTime + 0.25) {
+        var i = musicStepIndex % MUSIC_LEN;
+        var bar = Math.floor(i / STEPS_PER_BAR);
+        var beat = i % STEPS_PER_BAR;
+        var t = musicNextStepTime;
+
+        if (beat === 0) musicNote(BASS_ROOTS[bar], t, MUSIC_STEP * 3.4, 'triangle', 0.075);
+        else if (beat === 4) musicNote(BASS_ROOTS[bar] * 1.5, t, MUSIC_STEP * 2.6, 'triangle', 0.048);
+
+        if (MELODY[i] > 0) musicNote(MELODY[i], t, MUSIC_STEP * 1.7, 'sine', 0.058);
+
+        if (beat % 2 === 1) {
+          var tones = CHORD_TONES[bar];
+          musicNote(tones[Math.floor(beat / 2) % tones.length], t, MUSIC_STEP * 0.85, 'triangle', 0.022);
         }
+
         musicNextStepTime += MUSIC_STEP;
         musicStepIndex++;
       }
@@ -172,7 +225,7 @@
     title: '#e88a2a',
     dim: '#4a3f38',
     bad: '#e0392a',
-    good: '#4fc95f',
+    good: '#15702e',
     flash: '#ffffff',
     panelBg: 'rgba(30,26,20,0.16)',
     waterTop: '#5ec8e8',

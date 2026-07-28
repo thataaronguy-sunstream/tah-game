@@ -241,7 +241,8 @@
     corn: '#f2c14e', cornHusk: '#4a8f3f',
     feather: '#1e1e1e', featherEdge: '#55555f',
     bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
-    roast: '#c9822f', roastLight: '#e8b45f', roastDark: '#a05f22', bone: '#f7edd8',
+    roast: '#c9822f', roastLight: '#f0c477', roastDark: '#9c5a1e',
+    roastDeep: '#6f3d12', roastSheen: '#fbe3ad', bone: '#f7edd8',
     scarecrowSack: '#d8b978', scarecrowBody: '#8a6a3a', scarecrowDark: '#5c4526', hat: '#4a3f38',
     combineBody: '#c1432f', combineDark: '#7a2e1f', combineHeader: '#e0b93a', wheel: '#2a1f18'
   };
@@ -388,6 +389,7 @@
   var player = null;
   var enemies = [];
   var particles = [];
+  var drops = [];
   var corns = [];
   var platforms = [];
   var gapBridges = [];
@@ -462,6 +464,7 @@
     corns = [];
     enemies = [];
     particles = [];
+    drops = [];
 
     hasBoss = depth >= FINAL_DEPTH;
 
@@ -850,12 +853,97 @@
     runScore += Math.round(points * mult);
   }
 
+  // Feathers and straw are pure visual poof. Meat is not a particle - it drops
+  // as collectible loot (see spawnDrop / updateDrops).
   var PARTICLE_KINDS = {
     feather: { life: 1.1, gravity: 30, minSpeed: 10, spread: 20, lift: 10 },
-    bacon: { life: 0.9, gravity: 240, minSpeed: 20, spread: 40, lift: 20 },
-    straw: { life: 1.3, gravity: 150, minSpeed: 30, spread: 60, lift: 20 },
-    roast: { life: 1.5, gravity: 220, minSpeed: 12, spread: 26, lift: 34 }
+    straw: { life: 1.3, gravity: 150, minSpeed: 30, spread: 60, lift: 20 }
   };
+
+  var DROP_DEFS = {
+    bacon: { w: 6, h: 3, corn: 1, score: 15 },
+    roast: { w: 7, h: 5, corn: 2, score: 40 }
+  };
+
+  function spawnDrop(kind, cx, cy) {
+    var def = DROP_DEFS[kind];
+    drops.push({
+      kind: kind, w: def.w, h: def.h,
+      x: cx - def.w / 2, y: cy - def.h / 2,
+      vx: (Math.random() - 0.5) * 55,
+      vy: -30 - Math.random() * 40,
+      landed: false,
+      angle: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 7,
+      wave: Math.random() * Math.PI * 2,
+      bob: Math.random() * Math.PI * 2
+    });
+  }
+
+  // Meat never expires and never leaves the map: anything that misses solid
+  // ground is rescued onto the nearest slab rather than falling out of play.
+  function rescueDrop(d) {
+    var best = null, bestDist = Infinity;
+    var plats = platforms.concat(gapBridges);
+    for (var i = 0; i < plats.length; i++) {
+      var p = plats[i];
+      if (p.h <= 10) continue;
+      var clamped = Math.max(p.x, Math.min(p.x + p.w - d.w, d.x));
+      var dist = Math.abs(clamped - d.x);
+      if (dist < bestDist) { bestDist = dist; best = { p: p, x: clamped }; }
+    }
+    if (!best) {
+      d.x = Math.max(0, Math.min(levelWidth - d.w, d.x));
+      d.y = GROUND_Y - d.h;
+    } else {
+      d.x = best.x;
+      d.y = best.p.y - d.h;
+    }
+    d.vx = 0; d.vy = 0; d.landed = true; d.angle = 0;
+  }
+
+  function updateDrops(dt) {
+    var plats = platforms.concat(gapBridges);
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+
+      if (!d.landed) {
+        var prevBottom = d.y + d.h;
+        d.vy += 300 * dt;
+        if (d.vy > MAX_FALL_SPEED) d.vy = MAX_FALL_SPEED;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.vx *= 1 - 1.6 * dt;
+        d.angle += d.spin * dt;
+        d.x = Math.max(0, Math.min(levelWidth - d.w, d.x));
+
+        if (d.vy >= 0) {
+          for (var j = 0; j < plats.length; j++) {
+            var p = plats[j];
+            var newBottom = d.y + d.h;
+            if (d.x + d.w > p.x && d.x < p.x + p.w &&
+              prevBottom <= p.y + 0.5 && newBottom >= p.y) {
+              d.y = p.y - d.h;
+              d.vy = 0; d.vx = 0;
+              d.landed = true;
+              d.angle = 0;
+              break;
+            }
+          }
+        }
+        if (!d.landed && d.y > H + 4) rescueDrop(d);
+      }
+
+      if (aabbOverlap(player.x, player.y, player.w, player.h, d.x, d.y, d.w, d.h)) {
+        var def = DROP_DEFS[d.kind];
+        runCorn += def.corn;
+        addScore(def.score);
+        audio.corn();
+        d.taken = true;
+      }
+    }
+    drops = drops.filter(function (dd) { return !dd.taken; });
+  }
 
   function emitParticles(kind, count, cx, cy) {
     var cfg = PARTICLE_KINDS[kind];
@@ -878,20 +966,23 @@
     if (e.type === 'crow') {
       // Poof of black feathers, and the bird itself comes out oven-ready.
       emitParticles('feather', 8, cx, cy);
-      emitParticles('roast', 1, cx, cy);
+      spawnDrop('roast', cx, cy);
     } else if (e.type === 'scarecrow') {
       emitParticles('straw', 14, cx, cy);
     } else {
-      emitParticles('bacon', 5, cx, cy);
+      for (var b = 0; b < 3; b++) spawnDrop('bacon', cx, cy);
     }
   }
 
   function killEnemy(e) {
     if (e.dead) return;
     e.dead = true;
-    if (e.type === 'crow') { addScore(SCORE_CROW); runCorn += 2; }
+    // Score is the kill reward; corn now comes from collecting the meat it
+    // drops, so the two aren't paid out twice. The boss drops straw, not meat,
+    // so it still pays its corn directly.
+    if (e.type === 'crow') addScore(SCORE_CROW);
     else if (e.type === 'scarecrow') { addScore(SCORE_BOSS); runCorn += 20; }
-    else { addScore(SCORE_BOAR); runCorn += 3; }
+    else addScore(SCORE_BOAR);
     spawnDeathEffect(e);
     audio.death(e.type === 'crow' ? 'feather' : e.type === 'scarecrow' ? 'straw' : 'bacon');
   }
@@ -945,6 +1036,21 @@
         killEnemy(e);
         continue;
       }
+      // Stomp: coming down on an enemy's head deals a hit and bounces you off
+      // instead of costing health. One damage per stomp, so with their existing
+      // health that's two stomps for a boar and one for a crow. The boss is too
+      // big to vault off.
+      if (!combineActive && player.vy > 0 && e.type !== 'scarecrow' &&
+        (player.y + player.h) < e.y + e.h * 0.6) {
+        e.hp -= 1;
+        e.hitFlash = 0.12;
+        player.vy = JUMP_VELOCITY * 0.62;
+        player.jumpCut = true;
+        audio.hitEnemy();
+        if (e.hp <= 0) killEnemy(e);
+        continue;
+      }
+
       if (player.hitInvuln > 0 || player.rolling > 0) continue;
       player.hp -= 1;
       player.hitInvuln = PLAYER_HIT_INVULN;
@@ -1103,7 +1209,7 @@
   function updateParticles(dt) {
     for (var i = particles.length - 1; i >= 0; i--) {
       var p = particles[i];
-      var gravity = (PARTICLE_KINDS[p.kind] || PARTICLE_KINDS.bacon).gravity;
+      var gravity = (PARTICLE_KINDS[p.kind] || PARTICLE_KINDS.straw).gravity;
       p.vy += gravity * dt;
       if (p.kind === 'feather') {
         p.vx *= 1 - 1.5 * dt;
@@ -1146,6 +1252,7 @@
     for (var j = 0; j < enemies.length; j++) updateEnemy(enemies[j], dt);
     enemies = enemies.filter(function (en) { return !en.dead; });
     checkEnemyContact();
+    updateDrops(dt);
 
     cameraX = Math.max(0, Math.min(Math.max(0, levelWidth - W), player.x + player.w / 2 - W / 2));
   }
@@ -1550,14 +1657,17 @@
     ctx.stroke();
     ctx.restore();
 
+    // Scale the drawn fork with actual attack reach, so LONG HANDLE visibly
+    // lengthens it and the sprite honestly represents the hitbox.
+    var reachScale = mods.attackRange / 14;
     var handX = cx + p.facing * 3, handY = cy + 7;
     if (p.attackTimer > 0) {
       var t = 1 - p.attackTimer / ATTACK_DURATION;
       var sweepArc = (p.comboStep === 0) ? [-0.6, 0.9] : [0.9, -0.6];
       var a = sweepArc[0] + (sweepArc[1] - sweepArc[0]) * t;
-      drawPitchfork(handX, handY, p.facing > 0 ? a : Math.PI - a, 11);
+      drawPitchfork(handX, handY, p.facing > 0 ? a : Math.PI - a, 11 * reachScale);
     } else {
-      drawPitchfork(handX, handY, p.facing > 0 ? 0.15 : Math.PI - 0.15, 9);
+      drawPitchfork(handX, handY, p.facing > 0 ? 0.15 : Math.PI - 0.15, 9 * reachScale);
     }
   }
 
@@ -1714,6 +1824,115 @@
     }
   }
 
+  function drawBaconShape(wave) {
+    var L = 7.5, TH = 2.6, AMP = 0.85, SEG = 8;
+    function edgeY(t, off) { return Math.sin(t * Math.PI * 2.2 + wave) * AMP + off; }
+
+    ctx.beginPath();
+    for (var i = 0; i <= SEG; i++) {
+      var t = i / SEG, ex = -L / 2 + t * L;
+      if (i === 0) ctx.moveTo(ex, edgeY(t, -TH / 2));
+      else ctx.lineTo(ex, edgeY(t, -TH / 2));
+    }
+    for (var j = SEG; j >= 0; j--) {
+      var t2 = j / SEG;
+      ctx.lineTo(-L / 2 + t2 * L, edgeY(t2, TH / 2));
+    }
+    ctx.closePath();
+    ctx.fillStyle = COLOR.bacon;
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.4;
+    ctx.stroke();
+
+    ctx.strokeStyle = COLOR.baconFat;
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    for (var k = 0; k <= SEG; k++) {
+      var t3 = k / SEG;
+      if (k === 0) ctx.moveTo(-L / 2, edgeY(t3, -0.55));
+      else ctx.lineTo(-L / 2 + t3 * L, edgeY(t3, -0.55));
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = COLOR.baconStripe;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (var m = 0; m <= SEG; m++) {
+      var t4 = m / SEG;
+      if (m === 0) ctx.moveTo(-L / 2, edgeY(t4, 0.75));
+      else ctx.lineTo(-L / 2 + t4 * L, edgeY(t4, 0.75));
+    }
+    ctx.stroke();
+  }
+
+  function drumstick(bx, by, ang, scale) {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(ang);
+    ctx.fillStyle = COLOR.roastDark;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 1.9 * scale, 1.15 * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+    ctx.strokeStyle = COLOR.bone;
+    ctx.lineWidth = 0.9 * scale;
+    ctx.beginPath();
+    ctx.moveTo(1.2 * scale, 0);
+    ctx.lineTo(2.5 * scale, 0);
+    ctx.stroke();
+    ctx.fillStyle = COLOR.bone;
+    ctx.beginPath();
+    ctx.arc(2.8 * scale, 0, 0.68 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.3;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // A trussed bird rather than an oval: bezier breast tapering to the tail,
+  // a roasted gradient, crisped sheen, and two drumsticks with exposed bone.
+  function drawRoastShape() {
+    drumstick(2.0, -1.5, -0.55, 0.95);
+
+    var grad = ctx.createLinearGradient(0, -3.2, 0, 2.4);
+    grad.addColorStop(0, COLOR.roastLight);
+    grad.addColorStop(0.45, COLOR.roast);
+    grad.addColorStop(1, COLOR.roastDeep);
+
+    ctx.beginPath();
+    ctx.moveTo(-3.7, 0.3);
+    ctx.bezierCurveTo(-4.1, -1.9, -2.3, -3.1, 0.2, -3.0);
+    ctx.bezierCurveTo(2.5, -2.9, 3.9, -1.7, 4.1, -0.2);
+    ctx.bezierCurveTo(4.2, 1.1, 2.7, 2.1, 0.4, 2.2);
+    ctx.bezierCurveTo(-1.9, 2.3, -3.4, 1.6, -3.7, 0.3);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.42;
+    ctx.stroke();
+
+    ctx.strokeStyle = COLOR.roastSheen;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.ellipse(-0.7, -0.9, 2.0, 1.25, -0.2, Math.PI * 1.02, Math.PI * 1.85);
+    ctx.stroke();
+
+    // Trussing string across the breast.
+    ctx.strokeStyle = COLOR.roastDeep;
+    ctx.lineWidth = 0.35;
+    ctx.beginPath();
+    ctx.moveTo(-1.4, -2.5);
+    ctx.lineTo(-0.7, 2.0);
+    ctx.stroke();
+
+    drumstick(2.5, 0.6, 0.42, 0.85);
+  }
+
   function drawParticles() {
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
@@ -1731,93 +1950,27 @@
         ctx.strokeStyle = COLOR.featherEdge;
         ctx.lineWidth = 0.5;
         ctx.stroke();
-      } else if (p.kind === 'roast') {
-        // Oven-ready bird: plump body, two drumsticks with bone tips.
-        ctx.fillStyle = COLOR.roastDark;
-        [[2.4, 1.0, 0.6], [1.6, 1.5, 1.0]].forEach(function (d) {
-          ctx.beginPath();
-          ctx.ellipse(d[0], d[1], 1.5, 0.8, d[2], 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = COLOR.outline;
-          ctx.lineWidth = 0.35;
-          ctx.stroke();
-        });
-        ctx.fillStyle = COLOR.bone;
-        [[3.7, 1.6], [2.4, 2.5]].forEach(function (b) {
-          ctx.beginPath();
-          ctx.arc(b[0], b[1], 0.6, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = COLOR.outline;
-          ctx.lineWidth = 0.3;
-          ctx.stroke();
-        });
-
-        ctx.fillStyle = COLOR.roast;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 3.4, 2.6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = COLOR.outline;
-        ctx.lineWidth = 0.4;
-        ctx.stroke();
-
-        ctx.strokeStyle = COLOR.roastLight;
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        ctx.ellipse(-0.4, -0.5, 2.1, 1.3, -0.15, Math.PI * 0.95, Math.PI * 1.95);
-        ctx.stroke();
-      } else if (p.kind === 'straw') {
+      } else {
         ctx.strokeStyle = COLOR.straw;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(-3, 0);
         ctx.lineTo(3, 0);
         ctx.stroke();
-      } else {
-        // A rippled rasher rather than a flat chip: wavy top and bottom edges
-        // with a pale fat streak following the same curve.
-        var L = 7.5, TH = 2.6, AMP = 0.85, SEG = 8;
-        var w0 = p.wave || 0;
-        function edgeY(t, off) {
-          return Math.sin(t * Math.PI * 2.2 + w0) * AMP + off;
-        }
-
-        ctx.beginPath();
-        for (var i = 0; i <= SEG; i++) {
-          var t = i / SEG, ex = -L / 2 + t * L;
-          if (i === 0) ctx.moveTo(ex, edgeY(t, -TH / 2));
-          else ctx.lineTo(ex, edgeY(t, -TH / 2));
-        }
-        for (var j = SEG; j >= 0; j--) {
-          var t2 = j / SEG, ex2 = -L / 2 + t2 * L;
-          ctx.lineTo(ex2, edgeY(t2, TH / 2));
-        }
-        ctx.closePath();
-        ctx.fillStyle = COLOR.bacon;
-        ctx.fill();
-        ctx.strokeStyle = COLOR.outline;
-        ctx.lineWidth = 0.4;
-        ctx.stroke();
-
-        ctx.strokeStyle = COLOR.baconFat;
-        ctx.lineWidth = 0.75;
-        ctx.beginPath();
-        for (var k = 0; k <= SEG; k++) {
-          var t3 = k / SEG, ex3 = -L / 2 + t3 * L;
-          if (k === 0) ctx.moveTo(ex3, edgeY(t3, -0.55));
-          else ctx.lineTo(ex3, edgeY(t3, -0.55));
-        }
-        ctx.stroke();
-
-        ctx.strokeStyle = COLOR.baconStripe;
-        ctx.lineWidth = 0.5;
-        ctx.beginPath();
-        for (var m = 0; m <= SEG; m++) {
-          var t4 = m / SEG, ex4 = -L / 2 + t4 * L;
-          if (m === 0) ctx.moveTo(ex4, edgeY(t4, 0.75));
-          else ctx.lineTo(ex4, edgeY(t4, 0.75));
-        }
-        ctx.stroke();
       }
+      ctx.restore();
+    }
+  }
+
+  function drawDrops() {
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      var bobY = d.landed ? Math.sin(time * 3 + d.bob) * 0.6 : 0;
+      ctx.save();
+      ctx.translate(d.x + d.w / 2, d.y + d.h / 2 + bobY);
+      ctx.rotate(d.angle);
+      if (d.kind === 'roast') drawRoastShape();
+      else drawBaconShape(d.wave);
       ctx.restore();
     }
   }
@@ -2020,6 +2173,7 @@
       drawPlatforms();
       drawExit();
       drawCorn();
+      drawDrops();
       for (var i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
       if (player && state !== 'victory') drawPlayer();
       drawParticles();

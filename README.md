@@ -12,5 +12,7 @@ Play: https://thataaronguy-sunstream.github.io/tah-game/
 - **Corn** does double duty: every 5 picked up offers a choice of 3 run upgrades, and the total banks on death for the skill tree.
 - **Death ends the run.** Upgrades are lost, banked corn is kept — that's what makes the tree matter.
 - **The combine** is a toggleable form: it flattens ordinary animals on contact, fords water and bridges pits, but can't jump. The scarecrow can still hurt it.
+- **Kills drop food you have to collect.** Boars leave rashers of bacon, crows leave a roast chicken in a poof of black feathers. Score is paid for the kill, corn for picking the meat up — and dropped meat never falls out of the level; anything landing over a gap is placed on the nearest ground.
+- **Stomping works.** Landing on an enemy from above deals a hit and bounces you off: two stomps for a boar, one for a crow. The scarecrow is too big to vault off.
 - **Boars that fall in water** paddle at the surface until they drown, and still drop bacon.
 - **A mid-air jump is a luxury,** not an assumption. Every gap and platform is clearable with a single jump; Straw Wings is the priciest tree node and the rarest card in the upgrade pool.

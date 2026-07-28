@@ -71,17 +71,18 @@
       return bar;
     }
 
-    // Banjo forward roll: continuous sixteenths cycling through the chord,
-    // low in the mix so it sits under the fiddle like a rhythm player.
+    // Banjo roll on eighths, not sixteenths. Rolling continuously under the
+    // fiddle's own sixteenth runs turned the mix to mush; on eighths it reads
+    // as a rhythm player backing the melody instead of competing with it.
     function harmBar(chordName, octave) {
       var c = CHORDS[chordName];
       var o = octave || 4;
       var t = [
-        NOTE[c.notes[0] + o], NOTE[c.notes[1] + o], NOTE[c.notes[2] + o],
-        NOTE[c.notes[0] + (o + 1)], NOTE[c.notes[2] + o], NOTE[c.notes[1] + o]
+        NOTE[c.notes[0] + o], NOTE[c.notes[2] + o], NOTE[c.notes[1] + o],
+        NOTE[c.notes[0] + (o + 1)]
       ];
-      var bar = [];
-      for (var i = 0; i < 16; i++) bar.push(t[i % t.length]);
+      var bar = new Array(16).fill(0);
+      for (var i = 0; i < 8; i++) bar[i * 2] = t[i % t.length];
       return bar;
     }
 
@@ -100,39 +101,41 @@
       i2: L('E5 . D5 . B4 . A4 . G4 . . . . . . .'),
       i3: L('D5 . E5 . G5 . E5 . D5 . B4 . . . . .'),
       i4: L('G5 . . . D5 . . . B4 . . . G4 . . .'),
-      a1: L('G4 B4 D5 B4 G5 . D5 . E5 . D5 . B4 . . .'),
-      a2: L('C5 E5 G5 E5 C5 . G4 . A4 . C5 . E5 . . .'),
-      a3: L('D5 F#5 A5 F#5 D5 . A4 . B4 . D5 . F#5 . . .'),
-      a4: L('G5 . F#5 . E5 . D5 . B4 . A4 . G4 . . .'),
-      a5: L('B4 . D5 . G5 . D5 . E5 . D5 . B4 . G4 .'),
-      a6: L('G5 A5 B5 A5 G5 . E5 . D5 . B4 . G4 . . .'),
+      a1: L('G4 . B4 . D5 . B4 . G5 . . . D5 . . .'),
+      a2: L('C5 . E5 . G5 . E5 . C5 . . . G4 . . .'),
+      a3: L('D5 . F#5 . A5 . F#5 . D5 . . . A4 . . .'),
+      a4: L('G5 . F#5 . E5 . D5 . B4 . . . G4 . . .'),
+      a5: L('B4 . D5 . G5 . D5 . E5 . . . B4 . . .'),
+      a6: L('G5 . A5 . B5 . G5 . E5 . . . D5 . . .'),
       b1: L('E5 . G5 . B5 . G5 . E5 . D5 . B4 . . .'),
       b2: L('A4 . C5 . E5 . C5 . A4 . G4 . E4 . . .'),
       b3: L('F5 . E5 . D5 . C5 . B4 . A4 . G4 . . .'),
-      b4: L('D5 E5 F#5 G5 A5 . G5 . F#5 . E5 . D5 . . .'),
+      b4: L('D5 . F#5 . A5 . G5 . F#5 . . . D5 . . .'),
       c1: L('G5 . . B5 . . A5 . . G5 . . E5 . . .'),
       c2: L('D5 . . F#5 . . E5 . . D5 . . B4 . . .'),
-      c3: L('B5 . A5 . G5 . E5 . D5 . E5 . G5 . . .'),
-      c4: L('. G5 . E5 . D5 . B4 . D5 . E5 . G5 . .'),
-      d1: L('G4 . A4 . B4 . C5 . D5 . E5 . D5 . B4 .'),
-      d2: L('C5 . B4 . A4 . G4 . F5 . E5 . D5 . . .'),
-      d3: L('B4 D5 B4 G4 B4 . D5 . G5 . E5 . D5 . . .'),
-      d4: L('A4 . B4 . C5 . D5 . E5 . F#5 . G5 . . .'),
-      e1: L('G5 G5 . E5 E5 . D5 . B4 B4 . G4 . . . .'),
-      e2: L('D5 D5 . B4 B4 . G4 . A4 A4 . B4 . D5 . .'),
+      c3: L('B5 . . G5 . . E5 . D5 . . . G5 . . .'),
+      c4: L('. . G5 . . . D5 . . . B4 . . . D5 .'),
+      d1: L('G4 . B4 . D5 . E5 . D5 . . . B4 . . .'),
+      d2: L('C5 . B4 . A4 . G4 . E5 . . . D5 . . .'),
+      d3: L('B4 . D5 . G5 . E5 . D5 . . . B4 . . .'),
+      d4: L('A4 . C5 . E5 . F#5 . G5 . . . D5 . . .'),
+      e1: L('G5 . . E5 . . D5 . B4 . . G4 . . . .'),
+      e2: L('D5 . . B4 . . G4 . A4 . . B4 . . . .'),
       e3: L('G5 . B5 . D6 . B5 . G5 . E5 . D5 . . .'),
       e4: L('F5 . E5 . D5 . B4 . G4 . B4 . D5 . . .')
     };
 
     // 'k' kick/stomp, 's' snare, 'h' hat, 'o' open hat. The busier patterns are
     // a country train beat rather than a rock backbeat.
+    // Thinned out: the old train beat put a hat on every other sixteenth,
+    // which fought the banjo and the fiddle for the same space.
     var DRUMS = {
-      quiet: '....h.......h...',
-      basic: 'k...s...k...s...',
-      drive: 'k..hs..hk..hs..h',
-      train: 'k.hhs.hhk.hhs.hh',
-      busy: 'k.hks.hhk.hks.hs',
-      fill: 'k...s...s.s.ssss',
+      quiet: '............h...',
+      basic: 'k.......s.......',
+      drive: 'k...h...s...h...',
+      train: 'k...h...s...h..h',
+      busy: 'k...h.k.s...h...',
+      fill: 'k.......s...s.s.',
       none: '................'
     };
 
@@ -508,6 +511,15 @@
 
   function nodeLevel(id) { return meta.nodes[id] || 0; }
 
+  // The farmstead lists everything at a scandalous markup. Sven, tucked away
+  // in the corner, does the same goods at the honest price - but he's not on
+  // retainer, so the arrangement lapses the moment you leave the store.
+  var PRICE_MARKUP = 12;
+  var SVEN_HOTSPOT = { x: 320 - 72, y: 180 - 17, w: 68, h: 11 };
+  var svenMode = false;
+  function listPrice(node) { return node.cost * PRICE_MARKUP; }
+  function nodePrice(node) { return svenMode ? node.cost : listPrice(node); }
+
   // ------------------------------------------------------------- upgrades ---
   var UPGRADES = [
     {
@@ -855,12 +867,12 @@
     if (e.code === 'KeyF') formQueued = true;
 
     if (state === 'title') {
-      if (e.code === 'KeyH') { treeIndex = 0; state = 'hub'; }
+      if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
       else startRun();
       return;
     }
     if (state === 'dead' || state === 'victory') {
-      if (e.code === 'KeyH') { treeIndex = 0; state = 'hub'; }
+      if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
       else startRun();
       return;
     }
@@ -887,6 +899,20 @@
     }
   });
 
+  // Sven's corner. Deliberately unadvertised - the canvas is scaled, so the
+  // click point is mapped back into logical space before hit-testing.
+  canvas.addEventListener('click', function (ev) {
+    if (state !== 'hub') return;
+    var r = canvas.getBoundingClientRect();
+    var lx = (ev.clientX - r.left) / r.width * LOGICAL_W;
+    var ly = (ev.clientY - r.top) / r.height * LOGICAL_H;
+    if (lx >= SVEN_HOTSPOT.x && lx <= SVEN_HOTSPOT.x + SVEN_HOTSPOT.w &&
+      ly >= SVEN_HOTSPOT.y && ly <= SVEN_HOTSPOT.y + SVEN_HOTSPOT.h) {
+      svenMode = !svenMode;
+      audio.buy();
+    }
+  });
+
   window.addEventListener('keyup', function (e) { keys[e.code] = false; });
   window.addEventListener('blur', function () { keys = {}; });
 
@@ -900,13 +926,16 @@
     } else if (code === 'Space' || code === 'Enter') {
       var node = TREE[treeIndex];
       var lvl = nodeLevel(node.id);
-      if (lvl < node.max && meta.bankedCorn >= node.cost) {
-        meta.bankedCorn -= node.cost;
+      var price = nodePrice(node);
+      if (lvl < node.max && meta.bankedCorn >= price) {
+        meta.bankedCorn -= price;
         meta.nodes[node.id] = lvl + 1;
         saveMeta();
         audio.buy();
       }
     } else if (code === 'Escape' || code === 'KeyH') {
+      // Sven's discount lapses on the way out; you have to find him again.
+      svenMode = false;
       state = 'title';
     }
   }
@@ -1119,6 +1148,21 @@
     var plats = platforms;
     for (var i = 0; i < drops.length; i++) {
       var d = drops[i];
+
+      // Floating meat washes toward the nearer bank. Without this, an item
+      // against the far side of a 30px gap sits 1px beyond an un-upgraded
+      // fork's reach and can never be recovered.
+      if (d.floating) {
+        var wspan = waterSpanAt(d.x + d.w / 2);
+        if (wspan) {
+          var mid = d.x + d.w / 2;
+          var toLeft = mid - wspan.x;
+          var toRight = (wspan.x + wspan.w) - mid;
+          var dir = toLeft <= toRight ? -1 : 1;
+          d.x += dir * 8 * dt;
+          d.x = Math.max(wspan.x - d.w * 0.5, Math.min(wspan.x + wspan.w - d.w * 0.5, d.x));
+        }
+      }
 
       if (!d.landed) {
         var prevBottom = d.y + d.h;
@@ -1906,40 +1950,107 @@
     ctx.lineWidth = 1;
 
     if (e.type === 'boar') {
-      var bx = e.x, by = e.y, bw = e.w, bh = e.h;
-      var cx = bx + bw / 2, cy = by + bh / 2;
-      var faceX = e.facing > 0 ? bx + bw : bx;
+      // Drawn in local space facing +x and mirrored, so the silhouette stays
+      // correct both ways: shoulder hump, bristled spine, wedge snout and a
+      // pair of upswept tusks.
+      var body = flashing ? COLOR.flash : COLOR.boar;
+      var dark = flashing ? COLOR.flash : COLOR.boarDark;
 
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.boarDark;
-      ctx.fillRect(bx + bw * 0.15, by + bh - 1, 2, 3);
-      ctx.fillRect(bx + bw * 0.62, by + bh - 1, 2, 3);
+      ctx.save();
+      ctx.translate(e.x + e.w / 2, e.y + e.h / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 1;
 
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.boar;
+      // Legs behind the body.
+      ctx.fillStyle = dark;
+      [-4.2, -2.2, 2.0, 3.9].forEach(function (lx) {
+        ctx.fillRect(lx, 2.2, 1.7, 3.4);
+        ctx.strokeStyle = COLOR.outline;
+        ctx.strokeRect(lx + 0.5, 2.7, 0.8, 2.8);
+      });
+
+      // Curly tail.
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, bw / 2, bh / 2, 0, 0, Math.PI * 2);
+      ctx.moveTo(-6.2, -0.6);
+      ctx.quadraticCurveTo(-8.2, -1.6, -7.0, -2.9);
+      ctx.stroke();
+
+      // Humped body tapering into the head.
+      ctx.beginPath();
+      ctx.moveTo(-6.4, 1.9);
+      ctx.bezierCurveTo(-7.6, -0.8, -5.2, -4.4, -1.6, -4.6);
+      ctx.bezierCurveTo(1.4, -4.7, 2.8, -3.0, 4.0, -2.0);
+      ctx.bezierCurveTo(5.8, -1.0, 6.9, -0.2, 6.9, 0.9);
+      ctx.bezierCurveTo(6.9, 2.1, 5.4, 2.7, 3.9, 2.8);
+      ctx.bezierCurveTo(0.8, 3.1, -3.2, 3.2, -6.4, 1.9);
+      ctx.closePath();
+      ctx.fillStyle = body;
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.stroke();
 
-      var earBaseX = cx + e.facing * bw * 0.2;
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.boarDark;
+      // Bristles along the spine.
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 0.8;
+      for (var br = 0; br < 5; br++) {
+        var bxr = -4.4 + br * 1.45;
+        var byr = -4.1 - Math.sin(br * 0.7) * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(bxr, byr + 0.6);
+        ctx.lineTo(bxr - 0.5, byr - 1.9);
+        ctx.stroke();
+      }
+
+      // Ear.
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.moveTo(earBaseX - 2, by + 1);
-      ctx.lineTo(earBaseX - 0.5, by - 3);
-      ctx.lineTo(earBaseX + 1.5, by + 1);
+      ctx.moveTo(1.4, -3.6);
+      ctx.lineTo(2.6, -5.6);
+      ctx.lineTo(3.5, -3.1);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.6;
       ctx.stroke();
 
-      var snoutX = e.facing > 0 ? faceX - 3 : faceX;
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.boarLight;
-      ctx.fillRect(snoutX, cy - 1.5, 3, 3);
+      // Snout disc and nostril.
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.ellipse(6.6, 1.0, 1.2, 1.5, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.strokeStyle = COLOR.outline;
-      ctx.strokeRect(snoutX + 0.5, cy - 1, 2, 2);
-
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
       ctx.fillStyle = COLOR.outline;
-      ctx.fillRect(cx + e.facing * 3, cy - 3, 1, 1);
+      ctx.fillRect(6.5, 0.5, 0.7, 0.7);
+
+      // Tusks: the far one first so the near one reads on top.
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(4.3, 2.3);
+      ctx.quadraticCurveTo(6.1, 1.9, 5.9, 0.2);
+      ctx.moveTo(5.4, 2.5);
+      ctx.quadraticCurveTo(7.6, 2.0, 7.3, -0.9);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.boarLight;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(4.3, 2.3);
+      ctx.quadraticCurveTo(6.1, 1.9, 5.9, 0.2);
+      ctx.moveTo(5.4, 2.5);
+      ctx.quadraticCurveTo(7.6, 2.0, 7.3, -0.9);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+
+      // Eye.
+      ctx.fillStyle = COLOR.outline;
+      ctx.fillRect(3.5, -1.9, 1, 1);
+
+      ctx.restore();
     } else if (e.type === 'crow') {
       var flap = Math.sin(e.phase * 2) * 3;
       var ccx = e.x + e.w / 2, ccy = e.y + e.h / 2;
@@ -2384,7 +2495,7 @@
       var node = TREE[i];
       var lvl = nodeLevel(node.id);
       var maxed = lvl >= node.max;
-      var afford = meta.bankedCorn >= node.cost;
+      var afford = meta.bankedCorn >= nodePrice(node);
       var sel = i === treeIndex;
       var x = 24, y = y0 + i * rowH, w = W - 48, h = rowH - 4;
 
@@ -2405,9 +2516,41 @@
 
       ctx.textAlign = 'right';
       ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
-      ctx.fillStyle = maxed ? COLOR.good : (afford ? COLOR.hud : COLOR.bad);
-      ctx.fillText(maxed ? 'MAXED' : node.cost + ' CORN', x + w - 5, y + 12);
+      if (maxed) {
+        ctx.fillStyle = COLOR.good;
+        ctx.fillText('MAXED', x + w - 5, y + 12);
+      } else if (svenMode) {
+        // Honest price on the right, the farmstead's asking price struck out
+        // in red beside it.
+        var realStr = node.cost + ' CORN';
+        ctx.fillStyle = afford ? COLOR.good : COLOR.bad;
+        ctx.fillText(realStr, x + w - 5, y + 12);
+        var realW = ctx.measureText(realStr).width;
+
+        var listStr = String(listPrice(node));
+        var listRight = x + w - 9 - realW;
+        ctx.fillStyle = COLOR.dim;
+        ctx.fillText(listStr, listRight, y + 12);
+        var listW = ctx.measureText(listStr).width;
+
+        ctx.strokeStyle = COLOR.bad;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(listRight - listW - 1, y + 9.5);
+        ctx.lineTo(listRight + 1, y + 9.5);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = afford ? COLOR.hud : COLOR.bad;
+        ctx.fillText(listPrice(node) + ' CORN', x + w - 5, y + 12);
+      }
     }
+
+    // Sven himself: low-contrast, small, bottom-right. Findable, not signposted.
+    ctx.textAlign = 'right';
+    ctx.font = '5px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = svenMode ? 'rgba(126,217,155,0.55)' : 'rgba(245,241,230,0.16)';
+    ctx.fillText(svenMode ? 'buying from sven' : 'buy from sven instead',
+      SVEN_HOTSPOT.x + SVEN_HOTSPOT.w, SVEN_HOTSPOT.y + 7);
 
     ctx.textAlign = 'center';
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';

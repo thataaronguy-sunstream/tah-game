@@ -4,6 +4,124 @@
   var W = canvas.width;
   var H = canvas.height;
 
+  // All audio is synthesized with Web Audio oscillators/noise - no asset
+  // files, consistent with the rest of the game. AudioContext can't start
+  // until a user gesture, so it's created lazily on the first keydown.
+  var audio = (function () {
+    var ac = null;
+    var musicOn = false;
+    var musicNextStepTime = 0;
+    var musicStepIndex = 0;
+    var MUSIC_STEP = 60 / 132 / 2;
+    var MUSIC_PATTERN = [196, 0, 233, 0, 196, 0, 175, 0, 196, 0, 233, 0, 262, 0, 233, 0];
+
+    function ensure() {
+      if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === 'suspended') ac.resume();
+      return ac;
+    }
+
+    function beep(freq, duration, type, volume, delay) {
+      var a = ensure();
+      var t0 = a.currentTime + (delay || 0);
+      var osc = a.createOscillator();
+      var gain = a.createGain();
+      osc.type = type || 'square';
+      osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(volume || 0.12, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain);
+      gain.connect(a.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.02);
+    }
+
+    function sweep(freqStart, freqEnd, duration, type, volume) {
+      var a = ensure();
+      var t0 = a.currentTime;
+      var osc = a.createOscillator();
+      var gain = a.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freqStart, t0);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t0 + duration);
+      gain.gain.setValueAtTime(volume || 0.12, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain);
+      gain.connect(a.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.02);
+    }
+
+    function noiseBurst(duration, volume) {
+      var a = ensure();
+      var size = Math.floor(a.sampleRate * duration);
+      var buffer = a.createBuffer(1, size, a.sampleRate);
+      var data = buffer.getChannelData(0);
+      for (var i = 0; i < size; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / size);
+      var src = a.createBufferSource();
+      src.buffer = buffer;
+      var gain = a.createGain();
+      gain.gain.setValueAtTime(volume || 0.15, a.currentTime);
+      src.connect(gain);
+      gain.connect(a.destination);
+      src.start();
+    }
+
+    function startMusic() {
+      if (musicOn) return;
+      musicOn = true;
+      musicNextStepTime = ensure().currentTime + 0.1;
+      musicStepIndex = 0;
+    }
+
+    function tickMusic() {
+      if (!musicOn) return;
+      var a = ensure();
+      while (musicNextStepTime < a.currentTime + 0.2) {
+        var freq = MUSIC_PATTERN[musicStepIndex % MUSIC_PATTERN.length];
+        if (freq > 0) {
+          var osc = a.createOscillator();
+          var gain = a.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, musicNextStepTime);
+          gain.gain.setValueAtTime(0.04, musicNextStepTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, musicNextStepTime + MUSIC_STEP * 0.9);
+          osc.connect(gain);
+          gain.connect(a.destination);
+          osc.start(musicNextStepTime);
+          osc.stop(musicNextStepTime + MUSIC_STEP);
+        }
+        musicNextStepTime += MUSIC_STEP;
+        musicStepIndex++;
+      }
+    }
+
+    return {
+      unlock: function () { ensure(); startMusic(); },
+      tick: tickMusic,
+      jump: function () { sweep(220, 440, 0.12, 'square', 0.07); },
+      doubleJump: function () { sweep(330, 660, 0.12, 'square', 0.07); },
+      attack: function () { beep(180, 0.07, 'square', 0.06); },
+      hitEnemy: function () { beep(120, 0.06, 'square', 0.08); },
+      hitPlayer: function () { sweep(200, 80, 0.15, 'sawtooth', 0.11); },
+      corn: function () { beep(660, 0.07, 'square', 0.07); beep(880, 0.08, 'square', 0.06, 0.06); },
+      roll: function () { noiseBurst(0.1, 0.05); },
+      combineUnlock: function () {
+        [440, 554, 659, 880].forEach(function (f, i) { beep(f, 0.15, 'square', 0.09, i * 0.09); });
+      },
+      death: function (kind) {
+        if (kind === 'feather') noiseBurst(0.15, 0.09);
+        else if (kind === 'straw') { noiseBurst(0.3, 0.13); sweep(300, 100, 0.3, 'sawtooth', 0.07); }
+        else { beep(140, 0.08, 'square', 0.09); noiseBurst(0.08, 0.05); }
+      },
+      playerDeath: function () { sweep(300, 60, 0.6, 'sawtooth', 0.11); },
+      levelClear: function () {
+        [523, 659, 784, 1047].forEach(function (f, i) { beep(f, 0.2, 'square', 0.09, i * 0.12); });
+      }
+    };
+  })();
+
   var GRAVITY = 420;
   var MAX_FALL_SPEED = 260;
   var MOVE_SPEED = 55;
@@ -64,24 +182,41 @@
     combineBody: '#c1432f',
     combineDark: '#7a2e1f',
     combineHeader: '#e0b93a',
-    wheel: '#2a1f18'
+    wheel: '#2a1f18',
+    feather: '#f2f0e6',
+    bacon: '#e8836f',
+    baconStripe: '#8a2e22',
+    straw: '#e0c15a',
+    scarecrowSack: '#d8b978',
+    scarecrowBody: '#8a6a3a',
+    scarecrowDark: '#5c4526',
+    hat: '#4a3f38'
   };
 
   var SCORE_KEY = 'tah-game-deadfields-highscore';
   var CORN_SCORE = 25;
+  var CROW_SCORE = 50;
+  var BOAR_SCORE = 75;
+  var BOSS_SCORE = 500;
   var COMBINE_THRESHOLD = 5;
   var COMBINE_W = 18, COMBINE_H = 11;
 
   var ENEMY_DEFS = {
-    boar: { w: 14, h: 10, hp: 3, speed: 26, chargeSpeed: 72, detect: 55, contactDmg: 1 },
-    crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50, contactDmg: 1 }
+    boar: { w: 14, h: 10, hp: 2, speed: 26, chargeSpeed: 72, detect: 55, contactDmg: 1 },
+    crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50, contactDmg: 1 },
+    scarecrow: { w: 16, h: 22, hp: 12, speed: 0, chargeSpeed: 0, detect: 0, contactDmg: 1 }
   };
+  var BOSS_CROW_CAP = 20;
+  var BOSS_CROW_CONCURRENT_CAP = 5;
+  var BOSS_AGGRO_RANGE = 100;
+  var BOSS_SPAWN_INTERVAL = 1.8;
 
   var keys = {};
   var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'Space', 'ShiftLeft', 'ShiftRight'];
   var jumpQueued = false, attackQueued = false, rollQueued = false;
 
   window.addEventListener('keydown', function (e) {
+    audio.unlock();
     if (TRACKED.indexOf(e.code) !== -1) e.preventDefault();
     keys[e.code] = true;
     if (e.code === 'KeyW' && !e.repeat) jumpQueued = true;
@@ -105,6 +240,13 @@
   var barnX = 0;
   var water = { x: 0, w: 0 };
   var corns = [];
+  var bridges = [];
+  var GAPS = [
+    { x: 160, w: 32, isWater: true },
+    { x: 332, w: 32 },
+    { x: 454, w: 32 },
+    { x: 666, w: 32 }
+  ];
 
   function makeCorn(x, y) {
     return { x: x, y: y, w: 5, h: 6, collected: false };
@@ -151,6 +293,18 @@
     };
   }
 
+  function makeBoss(x, y) {
+    var def = ENEMY_DEFS.scarecrow;
+    enemyIdCounter++;
+    return {
+      id: enemyIdCounter, type: 'scarecrow', x: x, y: y, w: def.w, h: def.h,
+      vx: 0, vy: 0, facing: -1, hp: def.hp, hitFlash: 0,
+      spawnX: x, spawnY: y, patrolDir: 0, pauseTimer: 0,
+      phase: 0, onGround: false, fellOut: false, dead: false,
+      crowSpawnCount: 0, spawnTimer: BOSS_SPAWN_INTERVAL
+    };
+  }
+
   function buildEnemies() {
     return [
       makeEnemy('boar', 260, GROUND_Y - ENEMY_DEFS.boar.h),
@@ -158,8 +312,16 @@
       makeEnemy('boar', 410, GROUND_Y - ENEMY_DEFS.boar.h),
       makeEnemy('crow', 520, GROUND_Y - 55),
       makeEnemy('boar', 590, GROUND_Y - ENEMY_DEFS.boar.h),
-      makeEnemy('crow', 760, GROUND_Y - 65)
+      makeEnemy('crow', 760, GROUND_Y - 65),
+      makeBoss(barnX - 24, GROUND_Y - ENEMY_DEFS.scarecrow.h)
     ];
+  }
+
+  function isBossAlive() {
+    for (var i = 0; i < enemies.length; i++) {
+      if (enemies[i].type === 'scarecrow' && !enemies[i].dead) return true;
+    }
+    return false;
   }
 
   function makePlayer() {
@@ -187,6 +349,7 @@
   var cornCollected = 0;
   var hasCombine = false;
   var upgradeMsgTimer = 0;
+  var barnBlockedMsgTimer = 0;
 
   function transformToCombine() {
     hasCombine = true;
@@ -195,6 +358,102 @@
     player.h = COMBINE_H;
     player.y += oldH - COMBINE_H;
     upgradeMsgTimer = 2.2;
+    audio.combineUnlock();
+
+    bridges = GAPS.map(function (g) {
+      return { x: g.x, y: GROUND_Y, w: g.w, h: H - GROUND_Y, bridge: !g.isWater, noRender: !!g.isWater };
+    });
+    platforms = platforms.concat(bridges);
+  }
+
+  var particles = [];
+  var PARTICLE_LIFE = { feather: 1.1, bacon: 0.9, straw: 1.3 };
+
+  function spawnDeathEffect(e) {
+    var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+    var kind = e.type === 'crow' ? 'feather' : e.type === 'scarecrow' ? 'straw' : 'bacon';
+    var count = kind === 'feather' ? 6 : kind === 'straw' ? 14 : 5;
+    for (var i = 0; i < count; i++) {
+      var ang = Math.random() * Math.PI * 2;
+      var speed = kind === 'feather' ? 10 + Math.random() * 20 : kind === 'straw' ? 30 + Math.random() * 60 : 20 + Math.random() * 40;
+      particles.push({
+        x: cx, y: cy,
+        vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - (kind === 'feather' ? 10 : 20),
+        life: PARTICLE_LIFE[kind], maxLife: PARTICLE_LIFE[kind],
+        kind: kind, angle: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 6
+      });
+    }
+  }
+
+  function updateParticles(dt) {
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      var gravity = p.kind === 'feather' ? 30 : p.kind === 'straw' ? 150 : 240;
+      p.vy += gravity * dt;
+      if (p.kind === 'feather') {
+        p.vx *= 1 - 1.5 * dt;
+        if (p.vy > 25) p.vy = 25;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.angle += p.spin * dt;
+      p.life -= dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function drawParticles() {
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var alpha = Math.min(1, p.life / (p.maxLife * 0.4));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle);
+      if (p.kind === 'feather') {
+        ctx.fillStyle = COLOR.feather;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 1.4, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      } else if (p.kind === 'straw') {
+        ctx.strokeStyle = COLOR.straw;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-3, 0);
+        ctx.lineTo(3, 0);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = COLOR.bacon;
+        ctx.fillRect(-2.5, -1.5, 5, 3);
+        ctx.strokeStyle = COLOR.baconStripe;
+        ctx.lineWidth = 0.6;
+        ctx.beginPath();
+        ctx.moveTo(-2, -1);
+        ctx.lineTo(2, 1);
+        ctx.stroke();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(-2.5, -1.5, 5, 3);
+      }
+      ctx.restore();
+    }
+  }
+
+  function killEnemy(e) {
+    if (e.dead) return;
+    e.dead = true;
+    var pts = e.type === 'crow' ? CROW_SCORE : e.type === 'scarecrow' ? BOSS_SCORE : BOAR_SCORE;
+    score += pts;
+    if (score > highScore) {
+      highScore = score;
+      isNewHigh = true;
+      localStorage.setItem(SCORE_KEY, String(highScore));
+    }
+    spawnDeathEffect(e);
+    audio.death(e.type === 'crow' ? 'feather' : e.type === 'scarecrow' ? 'straw' : 'bacon');
   }
 
   function checkCorn() {
@@ -205,6 +464,7 @@
         c.collected = true;
         cornCollected += 1;
         score += CORN_SCORE;
+        audio.corn();
         if (score > highScore) {
           highScore = score;
           isNewHigh = true;
@@ -252,6 +512,7 @@
     if (rollQueued && player.rolling <= 0 && player.rollCooldown <= 0) {
       player.rolling = DODGE_DURATION;
       player.rollCooldown = DODGE_COOLDOWN;
+      audio.roll();
     }
     rollQueued = false;
 
@@ -271,9 +532,11 @@
       if (player.onGround) {
         player.vy = JUMP_VELOCITY;
         player.onGround = false;
+        audio.jump();
       } else if (player.doubleJumpAvailable) {
         player.vy = JUMP_VELOCITY * 0.85;
         player.doubleJumpAvailable = false;
+        audio.doubleJump();
       }
     }
     jumpQueued = false;
@@ -284,6 +547,7 @@
       player.hitThisSwing = {};
       player.comboStep = player.comboResetTimer > 0 ? 1 - player.comboStep : 0;
       player.comboResetTimer = COMBO_WINDOW;
+      audio.attack();
     }
     attackQueued = false;
 
@@ -292,8 +556,18 @@
     updateGrounded(player, dt);
     if (player.fellOut) player.hp = 0;
 
-    if (player.x + player.w / 2 > barnX) state = 'complete';
-    if (player.hp <= 0) state = 'dead';
+    if (player.x + player.w / 2 > barnX) {
+      if (!isBossAlive()) {
+        if (state !== 'complete') audio.levelClear();
+        state = 'complete';
+      } else if (barnBlockedMsgTimer <= 0) {
+        barnBlockedMsgTimer = 1.5;
+      }
+    }
+    if (player.hp <= 0) {
+      if (state !== 'dead') audio.playerDeath();
+      state = 'dead';
+    }
   }
 
   function resolveAttack() {
@@ -309,7 +583,8 @@
         e.vx = player.facing * 60;
         e.vy = -40;
         e.hitFlash = 0.12;
-        if (e.hp <= 0) e.dead = true;
+        audio.hitEnemy();
+        if (e.hp <= 0) killEnemy(e);
       }
     }
   }
@@ -318,9 +593,18 @@
     if (hasCombine) {
       for (var c = 0; c < enemies.length; c++) {
         var ce = enemies[c];
-        if (aabbOverlap(player.x, player.y, player.w, player.h, ce.x, ce.y, ce.w, ce.h)) {
-          ce.dead = true;
-          ce.hitFlash = 0.12;
+        if (ce.dead) continue;
+        if (!aabbOverlap(player.x, player.y, player.w, player.h, ce.x, ce.y, ce.w, ce.h)) continue;
+        if (ce.type === 'scarecrow') {
+          // Even the combine can't just roll through the boss - it's the one
+          // thing in the level that can still hurt you once you've upgraded.
+          if (player.hitInvuln <= 0 && player.rolling <= 0) {
+            player.hp -= 1;
+            player.hitInvuln = PLAYER_HIT_INVULN;
+            audio.hitPlayer();
+          }
+        } else {
+          killEnemy(ce);
         }
       }
       return;
@@ -333,6 +617,7 @@
         player.hitInvuln = PLAYER_HIT_INVULN;
         player.vx = (player.x < e.x ? -1 : 1) * 70;
         player.vy = -60;
+        audio.hitPlayer();
         if (e.type === 'boar') e.pauseTimer = 0.5;
         break;
       }
@@ -387,6 +672,23 @@
         }
       }
       e.x = Math.max(0, Math.min(LEVEL_WIDTH - e.w, e.x));
+    } else if (e.type === 'scarecrow') {
+      if (Math.abs(player.x - e.x) < BOSS_AGGRO_RANGE) {
+        e.spawnTimer -= dt;
+        if (e.spawnTimer <= 0 && e.crowSpawnCount < BOSS_CROW_CAP) {
+          var aliveBossCrows = 0;
+          for (var k = 0; k < enemies.length; k++) {
+            if (enemies[k].bossSpawned && !enemies[k].dead) aliveBossCrows++;
+          }
+          if (aliveBossCrows < BOSS_CROW_CONCURRENT_CAP) {
+            var nc = makeEnemy('crow', e.x + (Math.random() - 0.5) * 24, e.y - 20 - Math.random() * 20);
+            nc.bossSpawned = true;
+            enemies.push(nc);
+            e.crowSpawnCount++;
+          }
+          e.spawnTimer = BOSS_SPAWN_INTERVAL;
+        }
+      }
     }
   }
 
@@ -400,11 +702,16 @@
     cornCollected = 0;
     hasCombine = false;
     upgradeMsgTimer = 0;
+    barnBlockedMsgTimer = 0;
+    bridges = [];
+    particles = [];
     state = 'playing';
   }
 
   function update(dt) {
     time += dt;
+    updateParticles(dt);
+    audio.tick();
 
     if (state !== 'playing') {
       for (var i = 0; i < enemies.length; i++) {
@@ -421,6 +728,7 @@
     resolveAttack();
     checkCorn();
     if (upgradeMsgTimer > 0) upgradeMsgTimer -= dt;
+    if (barnBlockedMsgTimer > 0) barnBlockedMsgTimer -= dt;
     for (var j = 0; j < enemies.length; j++) updateEnemy(enemies[j], dt);
     enemies = enemies.filter(function (e) { return !e.dead; });
     checkEnemyContact();
@@ -471,7 +779,24 @@
   function drawPlatforms() {
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
-      if (p.h > 10) {
+      if (p.noRender) continue;
+      if (p.bridge) {
+        ctx.fillStyle = COLOR.crate;
+        ctx.fillRect(p.x, p.y, p.w, 5);
+        ctx.strokeStyle = COLOR.crateDark;
+        ctx.lineWidth = 1;
+        for (var bx = p.x + 6; bx < p.x + p.w; bx += 6) {
+          ctx.beginPath();
+          ctx.moveTo(bx + 0.5, p.y);
+          ctx.lineTo(bx + 0.5, p.y + 5);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = COLOR.outline;
+        ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, 4);
+        ctx.fillStyle = COLOR.crateDark;
+        ctx.fillRect(p.x + 2, p.y + 5, 3, H - (p.y + 5));
+        ctx.fillRect(p.x + p.w - 5, p.y + 5, 3, H - (p.y + 5));
+      } else if (p.h > 10) {
         ctx.fillStyle = COLOR.soil;
         ctx.fillRect(p.x, p.y, p.w, p.h);
 
@@ -781,7 +1106,88 @@
 
       ctx.fillStyle = COLOR.outline;
       ctx.fillRect(headX - 0.5, headY - 1.5, 1, 1);
+    } else if (e.type === 'scarecrow') {
+      var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
+      var scx = sx + sw / 2;
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.scarecrowDark;
+      ctx.fillRect(sx - 4, sy + 9, sw + 8, 3);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.strokeRect(sx - 3.5, sy + 9.5, sw + 7, 2);
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.scarecrowBody;
+      ctx.fillRect(sx + 2, sy + 8, sw - 4, sh - 8);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.strokeRect(sx + 2.5, sy + 8.5, sw - 5, sh - 9);
+
+      ctx.strokeStyle = COLOR.straw;
+      ctx.lineWidth = 1;
+      for (var st = 0; st < 3; st++) {
+        ctx.beginPath();
+        ctx.moveTo(sx + 3 + st * 4, sy + sh);
+        ctx.lineTo(sx + 2 + st * 4, sy + sh + 3);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.scarecrowSack;
+      ctx.beginPath();
+      ctx.ellipse(scx, sy + 4, sw / 2 - 1, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.hat;
+      ctx.beginPath();
+      ctx.moveTo(scx - 6, sy);
+      ctx.lineTo(scx + 6, sy);
+      ctx.lineTo(scx + 3, sy - 6);
+      ctx.lineTo(scx - 3, sy - 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(scx - 4, sy + 3);
+      ctx.lineTo(scx - 2, sy + 5);
+      ctx.moveTo(scx - 2, sy + 3);
+      ctx.lineTo(scx - 4, sy + 5);
+      ctx.moveTo(scx + 2, sy + 3);
+      ctx.lineTo(scx + 4, sy + 5);
+      ctx.moveTo(scx + 4, sy + 3);
+      ctx.lineTo(scx + 2, sy + 5);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(scx - 2, sy + 7);
+      ctx.lineTo(scx + 2, sy + 7);
+      ctx.stroke();
     }
+  }
+
+  function drawBossBar() {
+    var boss = null;
+    for (var i = 0; i < enemies.length; i++) {
+      if (enemies[i].type === 'scarecrow') boss = enemies[i];
+    }
+    if (!boss || boss.dead) return;
+    if (Math.abs(player.x - boss.x) > BOSS_AGGRO_RANGE * 1.6) return;
+
+    var maxHp = ENEMY_DEFS.scarecrow.hp;
+    var barW = 140, barH = 5, x = W / 2 - barW / 2, y = 20;
+    ctx.textAlign = 'center';
+    ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = COLOR.hud;
+    ctx.fillText('SCARECROW', W / 2, y - 3);
+
+    ctx.fillStyle = COLOR.hpEmpty;
+    ctx.fillRect(x, y, barW, barH);
+    ctx.fillStyle = COLOR.bad;
+    ctx.fillRect(x, y, barW * Math.max(0, boss.hp / maxHp), barH);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, barW - 1, barH - 1);
   }
 
   function drawHud() {
@@ -807,6 +1213,15 @@
       ctx.fillStyle = COLOR.title;
       ctx.fillText('COMBINE UNLOCKED!', W / 2, 24);
     }
+
+    if (barnBlockedMsgTimer > 0) {
+      ctx.textAlign = 'center';
+      ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillStyle = COLOR.bad;
+      ctx.fillText('DEFEAT THE SCARECROW FIRST', W / 2, H - 6);
+    }
+
+    drawBossBar();
   }
 
   function drawOverlayText(lines) {
@@ -837,6 +1252,7 @@
     drawCorn();
     for (var i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
     if (player && (state === 'playing' || state === 'dead')) drawPlayer();
+    drawParticles();
     ctx.restore();
 
     if (state === 'playing') {

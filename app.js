@@ -396,6 +396,22 @@
       slam: function () {
         sweep(220, 40, 0.35, 'sawtooth', 0.14);
         noiseBurst(0.22, 0.13);
+      },
+      // Sad-trombone descent for a drowning.
+      womp: function () {
+        [311.13, 277.18, 233.08].forEach(function (f, i) {
+          beep(f, 0.3, 'sawtooth', 0.12, i * 0.26);
+        });
+        var a = ensure();
+        var t0 = a.currentTime + 0.78;
+        var osc = a.createOscillator(), g = a.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(196, t0);
+        osc.frequency.exponentialRampToValueAtTime(82, t0 + 0.9);
+        g.gain.setValueAtTime(0.13, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.95);
+        osc.connect(g); g.connect(a.destination);
+        osc.start(t0); osc.stop(t0 + 1.0);
       }
     };
   })();
@@ -429,6 +445,8 @@
   // Single-jump horizontal reach is ~43px (0.79s airtime x 55px/s), so gaps
   // are capped well under that; the air jump is margin, not a requirement.
   var GAP_MIN = 22, GAP_MAX = 30;
+  var BRANCH_BASE = 24, BRANCH_STEP = 20;
+  var APPLE_CORN = 4, APPLE_SCORE = 60;
 
   // Kept under the original key so existing skill-tree progress survives the
   // rename rather than silently resetting for anyone who has already played.
@@ -445,6 +463,9 @@
     crow: '#1e1e1e', crowBeak: '#4a4a52', crowSheen: '#3d4655', crowEye: '#e8c15a',
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
     barnWall: '#c1432f', barnRoof: '#7a2e1f', barnDoor: '#4a2c18', barnTrim: '#f5f1e6',
+    soilWet: '#5f3c24', rock: '#9aa0a8', rockLight: '#d3d8de',
+    trunk: '#6a4526', trunkDark: '#4a2f18', leaf: '#3f8f3a', leafLight: '#6fc257',
+    apple: '#d63a2f',
     siloBody: '#d8cdb8', siloDark: '#a89a80', siloRoof: '#7a8088',
     hud: '#2a1f18', hpEmpty: '#d8cdb8', title: '#e88a2a', dim: '#4a3f38',
     bad: '#e0392a', good: '#15702e', flash: '#ffffff',
@@ -465,7 +486,7 @@
     scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
   };
 
-  var PLAYER_DROWN_TIME = 3.2;
+  var PLAYER_DROWN_TIME = 1.8;
   var SWIM_SPEED_MUL = 0.7;
   var BOAR_DROWN_TIME = 2.6;
   var BOAR_PADDLE_SPEED = 14;
@@ -617,6 +638,7 @@
   var drops = [];
   var corns = [];
   var platforms = [];
+  var trees = [];
   var waters = [];
   var levelWidth = 900;
   var exitX = 0;
@@ -628,6 +650,7 @@
   var treeIndex = 0;
   var barnBlockedMsgTimer = 0;
   var slamFx = 0;
+  var drownSeq = null;
   var toastText = '';
   var toastTimer = 0;
 
@@ -685,6 +708,7 @@
   function generateLevel() {
     var rng = makeRng(runSeed + depth * 7919);
     platforms = [];
+    trees = [];
     waters = [];
     corns = [];
     enemies = [];
@@ -734,21 +758,38 @@
       var usableW = usableEnd - slab.x;
       if (usableW < 24) continue;
 
-      if (usableW > 70 && rng() < 0.65) {
-        var pw = 26 + Math.round(rng() * 12);
-        var px = slab.x + Math.round(rng() * Math.max(1, usableW - pw));
-        // Capped so a single jump (~32px of lift) always reaches the top;
-        // the air jump is a rare luxury, never a requirement for corn.
-        var ph = 16 + Math.round(rng() * 10);
-        platforms.push({ x: px, y: GROUND_Y - ph, w: pw, h: 6 });
-        if (rng() < 0.7) corns.push({ x: px + pw / 2 - 2, y: GROUND_Y - ph - 8, w: 5, h: 6, collected: false });
+      // Platforms are branches growing off a trunk, stacked in tiers you can
+      // climb. First branch is 24px up and each tier adds 20, both inside a
+      // single jump's ~31px of lift, so no tier needs the air jump.
+      if (usableW > 70 && rng() < 0.7) {
+        var tiers = 1 + Math.floor(rng() * 3);
+        var trunkX = Math.round(slab.x + 16 + rng() * Math.max(1, usableW - 32));
+        var topBranchY = GROUND_Y - (BRANCH_BASE + (tiers - 1) * BRANCH_STEP);
+        trees.push({ x: trunkX, topY: topBranchY, tiers: tiers });
+
+        for (var ti = 0; ti < tiers; ti++) {
+          var by = GROUND_Y - (BRANCH_BASE + ti * BRANCH_STEP);
+          var side = (ti % 2 === 0) ? 1 : -1;
+          var bw = 22 + Math.round(rng() * 12);
+          var bx = side > 0 ? trunkX + 2 : trunkX - 2 - bw;
+          bx = Math.max(slab.x, Math.min(decorLimit - bw, bx));
+          platforms.push({ x: bx, y: by, w: bw, h: 6, branch: true, trunkX: trunkX });
+          if (rng() < 0.45) {
+            corns.push({ x: bx + bw / 2 - 2.5, y: by - 8, w: 5, h: 6, collected: false, kind: 'corn' });
+          }
+        }
+
+        // Sometimes an apple crowns the tree, worth more than a cob.
+        if (rng() < 0.45) {
+          corns.push({ x: trunkX - 2.5, y: topBranchY - 15, w: 6, h: 7, collected: false, kind: 'apple' });
+        }
       }
 
       var cornOnSlab = 1 + (rng() < 0.4 ? 1 : 0);
       for (var c = 0; c < cornOnSlab; c++) {
         corns.push({
           x: slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24)),
-          y: GROUND_Y - 6, w: 5, h: 6, collected: false
+          y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn'
         });
       }
 
@@ -819,6 +860,8 @@
   }
 
   function nextLevel() {
+    // A cleared field is a day's work: watered crops back home move on a stage.
+    advanceCrops();
     depth += 1;
     if (depth > meta.bestDepth) { meta.bestDepth = depth; saveMeta(); }
 
@@ -871,6 +914,395 @@
     return true;
   }
 
+
+  // ------------------------------------------------------------ farmstead --
+  // A persistent top-down plot, unlocked by beating the scarecrow. Tiles are
+  // worked with one context-sensitive action key; crops advance a stage each
+  // time a level is cleared on a run, so the two halves of the game feed each
+  // other. Saved alongside the skill tree.
+  var FARM_KEY = 'tah-game-farm';
+  var FARM_COLS = 16, FARM_ROWS = 8, TILE = 16;
+  var FARM_X0 = (320 - FARM_COLS * TILE) / 2;
+  var FARM_Y0 = 30;
+  var CROP_STAGES = 3;              // seedling -> growing -> ripe
+  var CROP_VALUE = 14;              // corn per harvested crop
+  var FARM_MOVE = 46;
+
+  // tile: { t: 'grass'|'rock'|'tree'|'soil', wet: bool, crop: -1 | 0..CROP_STAGES }
+  var farm = null;
+  var farmer = null;
+  var farmToast = '', farmToastTimer = 0;
+
+  function makeFarmTile(t) { return { t: t, wet: false, crop: -1 }; }
+
+  function generateFarm() {
+    var rng = makeRng(0xF00D);      // fixed layout so the plot feels like a place
+    var grid = [];
+    for (var r = 0; r < FARM_ROWS; r++) {
+      var row = [];
+      for (var c = 0; c < FARM_COLS; c++) {
+        var v = rng();
+        var t = 'grass';
+        if (v < 0.13) t = 'rock';
+        else if (v < 0.24) t = 'tree';
+        row.push(makeFarmTile(t));
+      }
+      grid.push(row);
+    }
+    // Keep the entry corner clear so you never spawn inside an obstacle.
+    grid[0][0] = makeFarmTile('grass');
+    grid[0][1] = makeFarmTile('grass');
+    grid[1][0] = makeFarmTile('grass');
+    return grid;
+  }
+
+  function loadFarm() {
+    try {
+      var raw = localStorage.getItem(FARM_KEY);
+      if (!raw) return generateFarm();
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length !== FARM_ROWS) return generateFarm();
+      for (var r = 0; r < FARM_ROWS; r++) {
+        if (!Array.isArray(parsed[r]) || parsed[r].length !== FARM_COLS) return generateFarm();
+      }
+      return parsed;
+    } catch (err) {
+      // Corrupt save: start a fresh plot rather than breaking the game.
+      return generateFarm();
+    }
+  }
+
+  function saveFarm() {
+    try { localStorage.setItem(FARM_KEY, JSON.stringify(farm)); } catch (err) { /* non-fatal */ }
+  }
+
+  // Called when a level is cleared: watered crops advance and dry out.
+  function advanceCrops() {
+    if (!farm) return;
+    var grew = 0;
+    for (var r = 0; r < FARM_ROWS; r++) {
+      for (var c = 0; c < FARM_COLS; c++) {
+        var t = farm[r][c];
+        if (t.crop >= 0 && t.crop < CROP_STAGES && t.wet) {
+          t.crop++;
+          t.wet = false;
+          grew++;
+        }
+      }
+    }
+    if (grew) saveFarm();
+  }
+
+  function enterFarm() {
+    if (!farm) farm = loadFarm();
+    farmer = { x: FARM_X0 + TILE * 0.5, y: FARM_Y0 + TILE * 0.5, facing: 1, dirX: 1, dirY: 0 };
+    farmToastTimer = 0;
+    state = 'farm';
+  }
+
+  function farmToastMsg(msg) { farmToast = msg; farmToastTimer = 1.6; }
+
+  function facedTile() {
+    var cx = farmer.x + farmer.dirX * TILE * 0.7;
+    var cy = farmer.y + farmer.dirY * TILE * 0.7;
+    var c = Math.floor((cx - FARM_X0) / TILE);
+    var r = Math.floor((cy - FARM_Y0) / TILE);
+    if (c < 0 || c >= FARM_COLS || r < 0 || r >= FARM_ROWS) return null;
+    return { r: r, c: c, tile: farm[r][c] };
+  }
+
+  // One key does the sensible thing for whatever you're facing.
+  function farmAction() {
+    var f = facedTile();
+    if (!f) return;
+    var t = f.tile;
+
+    if (t.t === 'rock') {
+      t.t = 'grass';
+      runCornAdd(2);
+      farmToastMsg('CLEARED ROCK  +2');
+      audio.hitEnemy();
+    } else if (t.t === 'tree') {
+      t.t = 'grass';
+      runCornAdd(5);
+      farmToastMsg('CHOPPED TREE  +5');
+      audio.hitEnemy();
+    } else if (t.t === 'grass') {
+      t.t = 'soil';
+      farmToastMsg('TILLED');
+      audio.roll();
+    } else if (t.t === 'soil' && t.crop < 0) {
+      t.crop = 0;
+      t.wet = false;
+      farmToastMsg('PLANTED');
+      audio.corn();
+    } else if (t.crop >= CROP_STAGES) {
+      t.crop = -1;
+      t.wet = false;
+      t.t = 'soil';
+      meta.bankedCorn += CROP_VALUE;
+      saveMeta();
+      farmToastMsg('HARVESTED  +' + CROP_VALUE + ' CORN');
+      audio.buy();
+    } else if (t.crop >= 0 && !t.wet) {
+      t.wet = true;
+      farmToastMsg('WATERED');
+      audio.corn();
+    } else {
+      farmToastMsg('ALREADY WATERED');
+      return;
+    }
+    saveFarm();
+  }
+
+  // Clearing debris pays straight into the bank, same currency as everything.
+  function runCornAdd(n) { meta.bankedCorn += n; saveMeta(); }
+
+  function updateFarm(dt) {
+    if (farmToastTimer > 0) farmToastTimer -= dt;
+    var mx = 0, my = 0;
+    if (keys.KeyA) mx -= 1;
+    if (keys.KeyD) mx += 1;
+    if (keys.KeyW) my -= 1;
+    if (keys.KeyS) my += 1;
+    if (mx || my) {
+      var len = Math.hypot(mx, my) || 1;
+      farmer.x += (mx / len) * FARM_MOVE * dt;
+      farmer.y += (my / len) * FARM_MOVE * dt;
+      farmer.dirX = mx === 0 ? 0 : (mx > 0 ? 1 : -1);
+      farmer.dirY = my === 0 ? 0 : (my > 0 ? 1 : -1);
+      if (mx) farmer.facing = mx > 0 ? 1 : -1;
+    }
+    farmer.x = Math.max(FARM_X0 + 2, Math.min(FARM_X0 + FARM_COLS * TILE - 2, farmer.x));
+    farmer.y = Math.max(FARM_Y0 + 2, Math.min(FARM_Y0 + FARM_ROWS * TILE - 2, farmer.y));
+  }
+
+  function drawFarm() {
+    ctx.fillStyle = COLOR.skyBottom;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.font = '9px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = COLOR.title;
+    ctx.fillText('THE HOMESTEAD', W / 2, 13);
+    ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = COLOR.hud;
+    ctx.fillText('BANKED CORN ' + meta.bankedCorn, W / 2, 23);
+
+    for (var r = 0; r < FARM_ROWS; r++) {
+      for (var c = 0; c < FARM_COLS; c++) {
+        var t = farm[r][c];
+        var x = FARM_X0 + c * TILE, y = FARM_Y0 + r * TILE;
+
+        ctx.fillStyle = (t.t === 'soil') ? (t.wet ? COLOR.soilWet : COLOR.soil) : COLOR.grass;
+        ctx.fillRect(x, y, TILE, TILE);
+        ctx.strokeStyle = 'rgba(42,31,24,0.16)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
+
+        if (t.t === 'soil') {
+          ctx.strokeStyle = 'rgba(42,31,24,0.28)';
+          for (var fr = 1; fr < 4; fr++) {
+            ctx.beginPath();
+            ctx.moveTo(x + 1, y + fr * 4 + 0.5);
+            ctx.lineTo(x + TILE - 1, y + fr * 4 + 0.5);
+            ctx.stroke();
+          }
+        }
+
+        if (t.t === 'rock') {
+          ctx.fillStyle = COLOR.rock;
+          ctx.beginPath();
+          ctx.ellipse(x + TILE / 2, y + TILE / 2 + 1, 5.5, 4.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = COLOR.outline;
+          ctx.stroke();
+          ctx.strokeStyle = COLOR.rockLight;
+          ctx.beginPath();
+          ctx.moveTo(x + TILE / 2 - 3, y + TILE / 2 - 1);
+          ctx.lineTo(x + TILE / 2, y + TILE / 2 - 2.5);
+          ctx.stroke();
+        } else if (t.t === 'tree') {
+          ctx.fillStyle = COLOR.trunk;
+          ctx.fillRect(x + TILE / 2 - 1.5, y + TILE / 2 + 1, 3, 5);
+          ctx.strokeStyle = COLOR.outline;
+          ctx.strokeRect(x + TILE / 2 - 1, y + TILE / 2 + 1.5, 2, 4);
+          ctx.fillStyle = COLOR.leaf;
+          ctx.beginPath();
+          ctx.arc(x + TILE / 2, y + TILE / 2 - 2, 5.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = COLOR.outline;
+          ctx.stroke();
+          ctx.fillStyle = COLOR.leafLight;
+          ctx.beginPath();
+          ctx.arc(x + TILE / 2 - 1.6, y + TILE / 2 - 3.4, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (t.crop >= 0) {
+          var cx2 = x + TILE / 2, cy2 = y + TILE - 3;
+          var ripe = t.crop >= CROP_STAGES;
+          var hgt = 3 + t.crop * 3;
+          ctx.strokeStyle = ripe ? COLOR.cornHusk : COLOR.leaf;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(cx2, cy2);
+          ctx.lineTo(cx2, cy2 - hgt);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx2, cy2 - hgt * 0.55);
+          ctx.lineTo(cx2 - 2.4, cy2 - hgt * 0.8);
+          ctx.moveTo(cx2, cy2 - hgt * 0.55);
+          ctx.lineTo(cx2 + 2.4, cy2 - hgt * 0.8);
+          ctx.stroke();
+          if (ripe) {
+            ctx.fillStyle = COLOR.corn;
+            ctx.beginPath();
+            ctx.ellipse(cx2, cy2 - hgt - 1.5, 2, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = COLOR.outline;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // Highlight the tile you're about to work.
+    var f = facedTile();
+    if (f) {
+      ctx.strokeStyle = COLOR.cardSel;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(FARM_X0 + f.c * TILE + 0.5, FARM_Y0 + f.r * TILE + 0.5, TILE - 1, TILE - 1);
+    }
+
+    // Top-down farmer.
+    ctx.save();
+    ctx.translate(farmer.x, farmer.y);
+    ctx.fillStyle = COLOR.player;
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 3.4, 3.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+    ctx.fillStyle = COLOR.straw;
+    ctx.beginPath();
+    ctx.ellipse(0, -1.4, 4.6, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.stroke();
+    ctx.fillStyle = COLOR.skin;
+    ctx.beginPath();
+    ctx.arc(farmer.dirX * 1.6, -1.4 + farmer.dirY * 1.4, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
+    if (farmToastTimer > 0) {
+      ctx.fillStyle = COLOR.title;
+      ctx.fillText(farmToast, W / 2, H - 14);
+    }
+    ctx.fillStyle = COLOR.dim;
+    ctx.fillText('WASD MOVE   SPACE WORK TILE   ENTER LEAVE', W / 2, H - 4);
+  }
+
+
+  // Drowning gets its own beat before the death screen: the farmer rolls
+  // flat and sinks with X eyes, the pitchfork tumbles away, the hat floats.
+  function startDrownSequence() {
+    drownSeq = {
+      t: 0,
+      x: player.x + player.w / 2,
+      y: GROUND_Y - 2,
+      angle: 0,
+      forkX: player.x + player.w / 2,
+      forkY: player.y + 2,
+      forkVx: (player.facing >= 0 ? 1 : -1) * (60 + Math.random() * 40),
+      forkVy: -135,
+      forkAngle: 0,
+      forkSpin: 15,
+      hatX: player.x + player.w / 2,
+      hatY: GROUND_Y - 3,
+      hatBob: Math.random() * 6
+    };
+    audio.womp();
+    state = 'drowning';
+  }
+
+  function updateDrownSeq(dt) {
+    var d = drownSeq;
+    if (!d) { endRun(false); return; }
+    d.t += dt;
+    d.angle = Math.min(Math.PI / 2, d.angle + dt * 2.6);
+    d.y += 10 * dt;
+    d.forkVy += 250 * dt;
+    d.forkX += d.forkVx * dt;
+    d.forkY += d.forkVy * dt;
+    d.forkAngle += d.forkSpin * dt;
+    d.hatBob += dt * 3;
+    if (d.t > 2.5) { drownSeq = null; endRun(false); }
+  }
+
+  function drawDrownSeq() {
+    var d = drownSeq;
+    if (!d) return;
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.18, 1 - d.t / 3.2);
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.angle);
+    ctx.fillStyle = COLOR.player;
+    ctx.fillRect(-4, -2, 8, 10);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-3.5, -1.5, 7, 9);
+    ctx.fillStyle = COLOR.skin;
+    ctx.beginPath();
+    ctx.arc(0, -5, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.stroke();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.7;
+    [[-1.5, -5.4], [1.5, -5.4]].forEach(function (ey) {
+      ctx.beginPath();
+      ctx.moveTo(ey[0] - 0.9, ey[1] - 0.9);
+      ctx.lineTo(ey[0] + 0.9, ey[1] + 0.9);
+      ctx.moveTo(ey[0] + 0.9, ey[1] - 0.9);
+      ctx.lineTo(ey[0] - 0.9, ey[1] + 0.9);
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(d.forkX, d.forkY);
+    ctx.rotate(d.forkAngle);
+    drawPitchfork(-5, 0, 0, 12);
+    ctx.restore();
+
+    var hy = d.hatY + Math.sin(d.hatBob) * 0.9;
+    ctx.save();
+    ctx.translate(d.hatX, hy);
+    ctx.fillStyle = COLOR.straw;
+    ctx.beginPath();
+    ctx.moveTo(-3, 0);
+    ctx.lineTo(-2.2, -3.6);
+    ctx.lineTo(2.2, -3.6);
+    ctx.lineTo(3, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 6, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // ---------------------------------------------------------------- input --
   var keys = {};
   var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'ShiftLeft', 'ShiftRight',
@@ -897,7 +1329,13 @@
     }
     if (state === 'dead' || state === 'victory') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
+      else if (e.code === 'KeyF' && state === 'victory') enterFarm();
       else startRun();
+      return;
+    }
+    if (state === 'farm') {
+      if (e.code === 'Space') farmAction();
+      else if (e.code === 'Enter' || e.code === 'Escape') { saveFarm(); state = 'title'; }
       return;
     }
     if (state === 'hub') {
@@ -1119,7 +1557,8 @@
     // Water is survivable but only briefly: you bob at the surface, can swim
     // sideways and jump out, and drown if you linger.
     var wspan = waterSpanAt(player.x + player.w / 2);
-    if (wspan && (player.y + player.h) > GROUND_Y) {
+    var submerged = (player.y + player.h) > GROUND_Y;
+    if (wspan && submerged) {
       player.swimming = true;
       player.onGround = false;
       player.airJumpsLeft = 0;
@@ -1129,13 +1568,16 @@
         player.vy = 0;
         player.y += (surfaceY - player.y) * Math.min(1, 9 * dt);
       }
-      // The banks are solid below the waterline: paddling sideways would
-      // otherwise slide you straight through the slab and out of the level.
-      // Getting out means jumping out.
-      player.x = Math.max(wspan.x - player.w * 0.35,
-        Math.min(wspan.x + wspan.w - player.w * 0.65, player.x));
       player.drownTimer -= dt;
-      if (player.drownTimer <= 0) player.hp = 0;
+      if (player.drownTimer <= 0) { startDrownSequence(); return; }
+    } else if (player.swimming && submerged) {
+      // Paddled clear of the stream's edge: haul up onto the bank. Without
+      // this the farmer is below the slab top and drops through the level.
+      player.y = GROUND_Y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+      player.swimming = false;
+      player.drownTimer = PLAYER_DROWN_TIME;
     } else {
       player.swimming = false;
       player.drownTimer = PLAYER_DROWN_TIME;
@@ -1393,8 +1835,9 @@
       if (c.collected) continue;
       if (!aabbOverlap(player.x, player.y, player.w, player.h, c.x, c.y, c.w, c.h)) continue;
       c.collected = true;
-      runCorn += mods.cornValue;
-      addScore(SCORE_CORN);
+      var isApple = c.kind === 'apple';
+      runCorn += isApple ? APPLE_CORN : mods.cornValue;
+      addScore(isApple ? APPLE_SCORE : SCORE_CORN);
       cornSinceUpgrade += 1;
       audio.corn();
       if (cornSinceUpgrade >= CORN_PER_UPGRADE) {
@@ -1499,13 +1942,10 @@
             e.facing = dx > 0 ? 1 : -1;
             e.vx = e.facing * def.chargeSpeed;
           }
-        } else if (adx < def.detect * 1.4 && vertGap > 0) {
-          // Player is on a platform overhead and can't be reached, so pace
-          // along underneath at walking speed instead of stutter-charging.
-          // Pull up at the edge rather than trotting off after them.
-          e.facing = dx > 0 ? 1 : -1;
-          e.vx = (adx < 6 || !groundAhead(e, e.facing)) ? 0 : e.facing * def.speed;
         } else {
+          // Anything up a tree is out of sight and out of mind - a boar only
+          // reacts to a player on its own level.
+
           if (!e.patrolDir) e.patrolDir = 1;
           if (Math.abs(e.x - e.spawnX) > 25) e.patrolDir = e.x > e.spawnX ? -1 : 1;
           // Turn around at a ledge. Only an active charge commits past the
@@ -1623,6 +2063,9 @@
     audio.tick();
     updateParticles(dt);
     if (toastTimer > 0) toastTimer -= dt;
+
+    if (state === 'farm') { updateFarm(dt); return; }
+    if (state === 'drowning') { updateDrownSeq(dt); return; }
 
     if (state !== 'playing') {
       // Ambient drift belongs to the title screen only. Running it during the
@@ -1780,10 +2223,71 @@
   }
 
 
+
+
+  function drawBranch(p) {
+    ctx.fillStyle = COLOR.trunk;
+    ctx.fillRect(p.x, p.y, p.w, 5);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, 4);
+    ctx.strokeStyle = COLOR.trunkDark;
+    ctx.lineWidth = 0.6;
+    for (var k = p.x + 4; k < p.x + p.w - 2; k += 6) {
+      ctx.beginPath();
+      ctx.moveTo(k, p.y + 1.5);
+      ctx.lineTo(k + 2.5, p.y + 3.5);
+      ctx.stroke();
+    }
+    // Leaf tufts along the limb.
+    ctx.fillStyle = COLOR.leaf;
+    for (var lf = p.x + 3; lf < p.x + p.w - 1; lf += 7) {
+      ctx.beginPath();
+      ctx.ellipse(lf, p.y - 1, 2.6, 1.6, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawTrees() {
+    for (var i = 0; i < trees.length; i++) {
+      var t = trees[i];
+      ctx.fillStyle = COLOR.trunk;
+      ctx.fillRect(t.x - 2, t.topY - 2, 4, GROUND_Y - t.topY + 2);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(t.x - 1.5, t.topY - 1.5, 3, GROUND_Y - t.topY + 1);
+      ctx.strokeStyle = COLOR.trunkDark;
+      ctx.lineWidth = 0.6;
+      for (var g = t.topY + 6; g < GROUND_Y - 3; g += 7) {
+        ctx.beginPath();
+        ctx.moveTo(t.x - 1.5, g);
+        ctx.lineTo(t.x + 1.5, g + 1.5);
+        ctx.stroke();
+      }
+      // Canopy crowning the trunk.
+      ctx.fillStyle = COLOR.leaf;
+      [[0, -7, 7], [-5, -4, 4.6], [5, -4, 4.6]].forEach(function (b) {
+        ctx.beginPath();
+        ctx.arc(t.x + b[0], t.topY + b[1], b[2], 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(t.x, t.topY - 7, 7, Math.PI * 0.9, Math.PI * 2.1);
+      ctx.stroke();
+      ctx.fillStyle = COLOR.leafLight;
+      ctx.beginPath();
+      ctx.arc(t.x - 2.5, t.topY - 9, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   function drawPlatforms() {
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
       if (p.h > 10) drawSlab(p);
+      else if (p.branch) drawBranch(p);
       else drawLedge(p);
     }
   }
@@ -1853,6 +2357,32 @@
       if (c.collected) continue;
       var bob = Math.sin(time * 3 + c.x) * 1;
       var cx = c.x + c.w / 2, cy = c.y + c.h / 2 + bob;
+
+      if (c.kind === 'apple') {
+        ctx.fillStyle = COLOR.apple;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        ctx.strokeStyle = COLOR.trunk;
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 2.6);
+        ctx.lineTo(cx + 0.6, cy - 4.6);
+        ctx.stroke();
+        ctx.fillStyle = COLOR.leaf;
+        ctx.beginPath();
+        ctx.ellipse(cx + 2.1, cy - 4.4, 1.7, 1.0, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.beginPath();
+        ctx.ellipse(cx - 1.1, cy - 1.1, 0.7, 1.0, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+
       ctx.fillStyle = COLOR.cornHusk;
       ctx.beginPath();
       ctx.moveTo(cx, cy - c.h / 2 - 2);
@@ -2521,20 +3051,6 @@
       ctx.fillText(toastText, W / 2, 22);
     }
 
-    // Drowning meter: a draining bar over the farmer's head, flashing red as
-    // it runs out, so the timer is never invisible.
-    if (player.swimming) {
-      var frac = Math.max(0, player.drownTimer / PLAYER_DROWN_TIME);
-      var bw = 16, bx = player.x + player.w / 2 - bw / 2 - cameraX, by = player.y - 8;
-      ctx.fillStyle = COLOR.hpEmpty;
-      ctx.fillRect(bx, by, bw, 3);
-      ctx.fillStyle = (frac < 0.35 && Math.floor(time * 8) % 2 === 0) ? COLOR.flash : COLOR.bad;
-      ctx.fillRect(bx, by, bw * frac, 3);
-      ctx.strokeStyle = COLOR.outline;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, 2);
-    }
-
     if (barnBlockedMsgTimer > 0) {
       ctx.textAlign = 'center';
       ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
@@ -2706,6 +3222,9 @@
   function render() {
     // Reset each frame so the logical->buffer scale can't compound.
     ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+
+    if (state === 'farm') { drawFarm(); return; }
+
     drawSky();
     drawHill();
 
@@ -2713,12 +3232,14 @@
       ctx.save();
       ctx.translate(-cameraX, 0);
       drawWater();
+      drawTrees();
       drawPlatforms();
       drawExit();
       drawCorn();
       drawDrops();
       for (var i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
-      if (player && state !== 'victory') drawPlayer();
+      if (player && state !== 'victory' && state !== 'drowning') drawPlayer();
+      if (state === 'drowning') drawDrownSeq();
       drawParticles();
       if (slamFx > 0 && player) {
         var t = 1 - slamFx / 0.42;
@@ -2774,7 +3295,7 @@
         { text: 'SCORE ' + pad(runScore) + '   CORN ' + runCorn, size: 7 },
         { text: 'TOTAL BANKED ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
-        { text: 'ANY KEY: NEW RUN     H: FARMSTEAD', size: 7 }
+        { text: 'F: HOMESTEAD   H: FARMSTEAD   ANY KEY: NEW RUN', size: 6 }
       ]);
     }
   }

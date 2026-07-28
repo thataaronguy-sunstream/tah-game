@@ -491,12 +491,15 @@
   var ENEMY_DEFS = {
     boar: { w: 14, h: 10, hp: 2, speed: 26, chargeSpeed: 72, detect: 55 },
     crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50 },
-    vulture: { w: 17, h: 13, hp: 4, speed: 26, diveSpeed: 104, detect: 74 },
+    vulture: { w: 17, h: 13, hp: 4, speed: 26, diveSpeed: 112, detect: 130 },
     scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
   };
 
   var PLAYER_DROWN_TIME = 1.8;
   var SWIM_SPEED_MUL = 0.7;
+  var VULTURE_TELEGRAPH = 0.45;
+  var VULTURE_DIVE_TIME = 1.1;
+  var VULTURE_COOLDOWN = 1.2;
   var BOAR_DROWN_TIME = 2.6;
   var BOAR_PADDLE_SPEED = 14;
 
@@ -726,6 +729,8 @@
     drops = [];
 
     hasBoss = depth >= FINAL_DEPTH;
+    // At most a couple of guarded apple trees per level, often none.
+    var appleQuota = Math.floor(rng() * 3);
 
     var slabCount = 4 + Math.min(6, depth);
     var cursor = 0;
@@ -771,7 +776,8 @@
       // Platforms are branches growing off a trunk, stacked in tiers you can
       // climb. Apple trees run the full 4 tiers and post a vulture at the top.
       if (usableW > 70 && rng() < 0.7) {
-        var bearsApple = rng() < 0.5;
+        var bearsApple = appleQuota > 0 && rng() < 0.45;
+        if (bearsApple) appleQuota--;
         var tiers = bearsApple ? 4 : (2 + Math.floor(rng() * 2));
         var trunkX = Math.round(slab.x + 18 + rng() * Math.max(1, usableW - 36));
         var topBranchY = GROUND_Y - (BRANCH_BASE + (tiers - 1) * BRANCH_STEP);
@@ -2017,29 +2023,45 @@
         // Hunched over the fruit, shuffling, until something climbs near.
         e.x += Math.sin(e.phase) * 4 * dt;
         e.y = e.perchY + Math.sin(e.phase * 0.8) * 1.5;
+        if (e.modeTimer > 0) e.modeTimer -= dt;
         var pdx = (player.x + player.w / 2) - (e.x + e.w / 2);
         var pdy = (player.y + player.h / 2) - (e.y + e.h / 2);
         e.facing = pdx > 0 ? 1 : -1;
-        if (Math.hypot(pdx, pdy) < def.detect) {
-          e.mode = 'dive';
-          e.modeTimer = 1.5;
+        if (e.modeTimer <= 0 && Math.hypot(pdx, pdy) < def.detect) {
+          e.mode = 'alert';
+          e.modeTimer = VULTURE_TELEGRAPH;
           audio.vultureCry();
+        }
+      } else if (e.mode === 'alert') {
+        // Rears up before committing, so the swoop can be read and dodged.
+        e.modeTimer -= dt;
+        e.y = e.perchY - 3 + Math.sin(time * 30) * 0.8;
+        var adx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        e.facing = adx > 0 ? 1 : -1;
+        if (e.modeTimer <= 0) {
+          // Lock the swoop vector once, at launch. Re-aiming every frame made
+          // it impossible to sidestep.
+          var lx = (player.x + player.w / 2) - (e.x + e.w / 2);
+          var ly = (player.y + player.h / 2) - (e.y + e.h / 2);
+          var ld = Math.hypot(lx, ly) || 1;
+          e.diveVx = (lx / ld) * def.diveSpeed;
+          e.diveVy = (ly / ld) * def.diveSpeed;
+          e.mode = 'dive';
+          e.modeTimer = VULTURE_DIVE_TIME;
         }
       } else if (e.mode === 'dive') {
         e.modeTimer -= dt;
-        var ddx = (player.x + player.w / 2) - (e.x + e.w / 2);
-        var ddy = (player.y + player.h / 2) - (e.y + e.h / 2);
-        var dd = Math.hypot(ddx, ddy) || 1;
-        e.facing = ddx > 0 ? 1 : -1;
-        e.x += (ddx / dd) * def.diveSpeed * dt;
-        e.y += (ddy / dd) * def.diveSpeed * dt;
-        if (e.modeTimer <= 0) { e.mode = 'return'; }
+        e.x += e.diveVx * dt;
+        e.y += e.diveVy * dt;
+        e.facing = e.diveVx > 0 ? 1 : -1;
+        if (e.modeTimer <= 0 || e.y + e.h >= GROUND_Y - 1) e.mode = 'return';
       } else {
         var rdx = e.perchX - e.x, rdy = e.perchY - e.y;
         var rd = Math.hypot(rdx, rdy) || 1;
         e.facing = rdx > 0 ? 1 : -1;
         if (rd < 2) {
           e.mode = 'perch';
+          e.modeTimer = VULTURE_COOLDOWN;
         } else {
           e.x += (rdx / rd) * def.speed * 1.8 * dt;
           e.y += (rdy / rd) * def.speed * 1.8 * dt;

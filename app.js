@@ -392,7 +392,11 @@
       levelClear: function () {
         [523, 659, 784, 1047].forEach(function (f, i) { beep(f, 0.2, 'square', 0.09, i * 0.12); });
       },
-      bossSwing: function () { sweep(150, 60, 0.2, 'sawtooth', 0.1); }
+      bossSwing: function () { sweep(150, 60, 0.2, 'sawtooth', 0.1); },
+      slam: function () {
+        sweep(220, 40, 0.35, 'sawtooth', 0.14);
+        noiseBurst(0.22, 0.13);
+      }
     };
   })();
 
@@ -400,7 +404,9 @@
   var GRAVITY = 420;
   var MAX_FALL_SPEED = 260;
   var MOVE_SPEED = 55;
-  var COMBINE_MOVE_SPEED = 46;
+  var COMBINE_MOVE_SPEED = 30;
+  var SLAM_RADIUS = 36;
+  var SLAM_DAMAGE = 2;
   var JUMP_VELOCITY = -165;
   // Releasing the jump key mid-ascent scrubs most of the remaining upward
   // velocity, so a tap is a short hop and a hold gives the full arc.
@@ -459,6 +465,8 @@
     scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
   };
 
+  var PLAYER_DROWN_TIME = 3.2;
+  var SWIM_SPEED_MUL = 0.7;
   var BOAR_DROWN_TIME = 2.6;
   var BOAR_PADDLE_SPEED = 14;
 
@@ -619,6 +627,7 @@
   var upgradeChoices = [];
   var treeIndex = 0;
   var barnBlockedMsgTimer = 0;
+  var slamFx = 0;
   var toastText = '';
   var toastTimer = 0;
 
@@ -644,7 +653,7 @@
       hp: mods.maxHp, hitInvuln: 0,
       attackTimer: 0, attackCooldown: 0, comboStep: 0, comboResetTimer: 0, hitThisSwing: {},
       rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true,
-      dropThrough: 0
+      dropThrough: 0, swimming: false, drownTimer: PLAYER_DROWN_TIME
     };
   }
 
@@ -761,6 +770,17 @@
   }
 
 
+  // Probe just past an enemy's leading foot for something to stand on.
+  function groundAhead(e, dir) {
+    var probeX = dir > 0 ? e.x + e.w + 1 : e.x - 1;
+    var probeY = e.y + e.h + 2;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (probeX >= p.x && probeX <= p.x + p.w && probeY >= p.y && probeY <= p.y + p.h) return true;
+    }
+    return false;
+  }
+
   function waterSpanAt(x) {
     for (var i = 0; i < waters.length; i++) {
       if (x >= waters[i].x && x <= waters[i].x + waters[i].w) return waters[i];
@@ -816,6 +836,8 @@
     player.vy = 0;
     player.hitInvuln = PLAYER_HIT_INVULN;
     player.jumpCut = true;
+    player.slamArmed = false;
+    slamFx = 0;
     state = 'playing';
   }
 
@@ -982,7 +1004,26 @@
     player.h = toCombine ? COMBINE_H : PLAYER_H;
     player.y = feet - player.h;
     player.x = Math.max(0, Math.min(levelWidth - player.w, centre - player.w / 2));
+    // Dropping into the combine mid-air arms a ground slam for the landing.
+    if (toCombine && !player.onGround) player.slamArmed = true;
     if (!silent) audio.transform();
+  }
+
+  function doSlam() {
+    slamFx = 0.42;
+    audio.slam();
+    for (var i = 0; i < enemies.length; i++) {
+      var e = enemies[i];
+      if (e.dead) continue;
+      var dx = (e.x + e.w / 2) - (player.x + player.w / 2);
+      var dy = (e.y + e.h / 2) - (player.y + player.h / 2);
+      if (Math.hypot(dx, dy) > SLAM_RADIUS) continue;
+      e.hp -= SLAM_DAMAGE;
+      e.hitFlash = 0.16;
+      e.vx = (dx >= 0 ? 1 : -1) * 90;
+      e.vy = -70;
+      if (e.hp <= 0) killEnemy(e);
+    }
   }
 
   function updatePlayer(dt) {
@@ -997,7 +1038,7 @@
     if (player.rollCooldown > 0) player.rollCooldown -= dt;
 
     if (formQueued) {
-      if (mods.hasCombine && player.onGround) setForm(!combineActive);
+      if (mods.hasCombine) setForm(!combineActive);
       else if (!mods.hasCombine) toast('NO COMBINE KEYS');
       formQueued = false;
     }
@@ -1016,7 +1057,8 @@
       var move = 0;
       if (keys.KeyA) { move -= 1; player.facing = -1; }
       if (keys.KeyD) { move += 1; player.facing = 1; }
-      player.vx = move * (combineActive ? COMBINE_MOVE_SPEED : MOVE_SPEED);
+      var baseSpeed = combineActive ? COMBINE_MOVE_SPEED : MOVE_SPEED;
+      player.vx = move * baseSpeed * (player.swimming ? SWIM_SPEED_MUL : 1);
     }
 
     if (player.onGround) player.airJumpsLeft = mods.airJumps;
@@ -1031,6 +1073,13 @@
       if (player.onGround) {
         player.vy = JUMP_VELOCITY;
         player.onGround = false;
+        player.jumpCut = false;
+        audio.jump();
+      } else if (player.swimming) {
+        // Haul out of the water. Slightly weaker than a standing jump but
+        // more than enough to clear the bank.
+        player.vy = JUMP_VELOCITY * 0.92;
+        player.swimming = false;
         player.jumpCut = false;
         audio.jump();
       } else if (player.airJumpsLeft > 0) {
@@ -1061,6 +1110,37 @@
     if (player.attackTimer > 0) player.attackTimer -= dt;
 
     updateGrounded(player, dt, plats, player.dropThrough > 0);
+
+    if (player.onGround && player.slamArmed) {
+      player.slamArmed = false;
+      doSlam();
+    }
+
+    // Water is survivable but only briefly: you bob at the surface, can swim
+    // sideways and jump out, and drown if you linger.
+    var wspan = waterSpanAt(player.x + player.w / 2);
+    if (wspan && (player.y + player.h) > GROUND_Y) {
+      player.swimming = true;
+      player.onGround = false;
+      player.airJumpsLeft = 0;
+      var surfaceY = GROUND_Y - player.h + 4;
+      // Only buoy up when not actively rising, so a jump can still carry out.
+      if (player.vy >= 0) {
+        player.vy = 0;
+        player.y += (surfaceY - player.y) * Math.min(1, 9 * dt);
+      }
+      // The banks are solid below the waterline: paddling sideways would
+      // otherwise slide you straight through the slab and out of the level.
+      // Getting out means jumping out.
+      player.x = Math.max(wspan.x - player.w * 0.35,
+        Math.min(wspan.x + wspan.w - player.w * 0.65, player.x));
+      player.drownTimer -= dt;
+      if (player.drownTimer <= 0) player.hp = 0;
+    } else {
+      player.swimming = false;
+      player.drownTimer = PLAYER_DROWN_TIME;
+    }
+
     if (player.fellOut) player.hp = 0;
 
     if (player.hp <= 0) {
@@ -1126,26 +1206,6 @@
 
   // Meat never expires and never leaves the map: anything that misses solid
   // ground is rescued onto the nearest slab rather than falling out of play.
-  function rescueDrop(d) {
-    var best = null, bestDist = Infinity;
-    var plats = platforms;
-    for (var i = 0; i < plats.length; i++) {
-      var p = plats[i];
-      if (p.h <= 10) continue;
-      var clamped = Math.max(p.x, Math.min(p.x + p.w - d.w, d.x));
-      var dist = Math.abs(clamped - d.x);
-      if (dist < bestDist) { bestDist = dist; best = { p: p, x: clamped }; }
-    }
-    if (!best) {
-      d.x = Math.max(0, Math.min(levelWidth - d.w, d.x));
-      d.y = GROUND_Y - d.h;
-    } else {
-      d.x = best.x;
-      d.y = best.p.y - d.h;
-    }
-    d.vx = 0; d.vy = 0; d.landed = true; d.angle = 0;
-  }
-
   function updateDrops(dt) {
     var plats = platforms;
     for (var i = 0; i < drops.length; i++) {
@@ -1203,9 +1263,9 @@
             d.vx = 0; d.vy = 0; d.angle = 0;
             d.y = GROUND_Y - d.h + 1;
           } else if (d.y > H + 4) {
-            // Dry pits go to the bottom of the screen where nothing can reach,
-            // so those get placed back on solid ground.
-            rescueDrop(d);
+            // Down a dry hole and gone for good - losing the drop is the
+            // cost of killing something over a pit.
+            d.taken = true;
           }
         }
       }
@@ -1353,7 +1413,18 @@
       // The combine flattens ordinary critters, but the boss can still hurt
       // it - otherwise the fight would be riskless once you have the keys.
       if (combineActive && e.type !== 'scarecrow') {
-        killEnemy(e);
+        // A crow diving onto the roof is above the header and gets through;
+        // anything that meets the front of the machine is flattened.
+        var overTheTop = e.type === 'crow' && (e.y + e.h) < player.y + player.h * 0.45;
+        if (!overTheTop) {
+          killEnemy(e);
+          continue;
+        }
+        if (player.hitInvuln <= 0 && player.rolling <= 0) {
+          player.hp -= 1;
+          player.hitInvuln = PLAYER_HIT_INVULN;
+          audio.hitPlayer();
+        }
         continue;
       }
       // Stomp: coming down on an enemy's head deals a hit and bounces you off
@@ -1431,11 +1502,15 @@
         } else if (adx < def.detect * 1.4 && vertGap > 0) {
           // Player is on a platform overhead and can't be reached, so pace
           // along underneath at walking speed instead of stutter-charging.
+          // Pull up at the edge rather than trotting off after them.
           e.facing = dx > 0 ? 1 : -1;
-          e.vx = adx < 6 ? 0 : e.facing * def.speed;
+          e.vx = (adx < 6 || !groundAhead(e, e.facing)) ? 0 : e.facing * def.speed;
         } else {
           if (!e.patrolDir) e.patrolDir = 1;
           if (Math.abs(e.x - e.spawnX) > 25) e.patrolDir = e.x > e.spawnX ? -1 : 1;
+          // Turn around at a ledge. Only an active charge commits past the
+          // edge, so a boar only drowns itself if you bait it across.
+          if (e.onGround && !groundAhead(e, e.patrolDir)) e.patrolDir *= -1;
           e.facing = e.patrolDir;
           e.vx = e.patrolDir * def.speed;
         }
@@ -1567,6 +1642,7 @@
     }
 
     if (barnBlockedMsgTimer > 0) barnBlockedMsgTimer -= dt;
+    if (slamFx > 0) slamFx -= dt;
 
     updatePlayer(dt);
     if (state !== 'playing') return;
@@ -1645,8 +1721,8 @@
       }
       ctx.stroke();
 
-      ctx.strokeStyle = COLOR.outline;
-      ctx.strokeRect(wtr.x + 0.5, y + 0.5, wtr.w - 1, H - y - 1);
+      // No outline around the water - the hard black box read as a tile
+      // rather than a stream. The banks either side already frame it.
     }
   }
 
@@ -2445,6 +2521,20 @@
       ctx.fillText(toastText, W / 2, 22);
     }
 
+    // Drowning meter: a draining bar over the farmer's head, flashing red as
+    // it runs out, so the timer is never invisible.
+    if (player.swimming) {
+      var frac = Math.max(0, player.drownTimer / PLAYER_DROWN_TIME);
+      var bw = 16, bx = player.x + player.w / 2 - bw / 2 - cameraX, by = player.y - 8;
+      ctx.fillStyle = COLOR.hpEmpty;
+      ctx.fillRect(bx, by, bw, 3);
+      ctx.fillStyle = (frac < 0.35 && Math.floor(time * 8) % 2 === 0) ? COLOR.flash : COLOR.bad;
+      ctx.fillRect(bx, by, bw * frac, 3);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, 2);
+    }
+
     if (barnBlockedMsgTimer > 0) {
       ctx.textAlign = 'center';
       ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
@@ -2630,6 +2720,17 @@
       for (var i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
       if (player && state !== 'victory') drawPlayer();
       drawParticles();
+      if (slamFx > 0 && player) {
+        var t = 1 - slamFx / 0.42;
+        var r = 6 + t * SLAM_RADIUS;
+        ctx.globalAlpha = Math.max(0, 1 - t) * 0.8;
+        ctx.strokeStyle = COLOR.roastSheen;
+        ctx.lineWidth = 2 - t;
+        ctx.beginPath();
+        ctx.ellipse(player.x + player.w / 2, player.y + player.h, r, r * 0.42, 0, Math.PI, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.restore();
     }
 

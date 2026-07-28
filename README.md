@@ -14,6 +14,6 @@ Play: https://thataaronguy-sunstream.github.io/tah-game/
 - **The combine** is a toggleable form: it flattens ordinary animals on contact, fords water and bridges pits, but can't jump. The scarecrow can still hurt it.
 - **Kills drop food you have to collect.** Boars leave rashers of bacon, crows leave a roast chicken in a poof of black feathers. Score is paid for the kill, corn for picking the meat up — and dropped meat never falls out of the level; anything landing over a gap is placed on the nearest ground.
 - **Stomping works.** Landing on an enemy from above deals a hit and bounces you off: two stomps for a boar, one for a crow. The scarecrow is too big to vault off.
-- **Animals sometimes drop a heart.** Roughly one kill in five leaves one; it restores a point of health, and it stays on the ground rather than being consumed if you're already full.
+- **Animals sometimes drop a heart.** Roughly one kill in five leaves one. It restores a point of health, or cashes out as a chunk of score plus a corn if you're already at full health.
 - **Boars that fall in water** paddle at the surface until they drown, and still drop bacon.
 - **A mid-air jump is a luxury,** not an assumption. Every gap and platform is clearable with a single jump; Straw Wings is the priciest tree node and the rarest card in the upgrade pool.

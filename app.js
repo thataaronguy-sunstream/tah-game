@@ -869,6 +869,7 @@
     health: { w: 5, h: 5, corn: 0, score: 10, heal: 1 }
   };
   var HEALTH_DROP_CHANCE = 0.22;
+  var HEART_FULL_SCORE = 60;
 
   function spawnDrop(kind, cx, cy) {
     var def = DROP_DEFS[kind];
@@ -942,17 +943,23 @@
 
       if (aabbOverlap(player.x, player.y, player.w, player.h, d.x, d.y, d.w, d.h)) {
         var def = DROP_DEFS[d.kind];
-        // Leave hearts on the ground at full health rather than wasting them.
-        if (def.heal && player.hp >= mods.maxHp) continue;
-
         if (def.heal) {
-          player.hp = Math.min(mods.maxHp, player.hp + def.heal);
-          audio.heal();
+          if (player.hp >= mods.maxHp) {
+            // Already topped up, so the heart cashes out as points instead of
+            // being wasted.
+            addScore(HEART_FULL_SCORE);
+            runCorn += 1;
+            audio.corn();
+          } else {
+            player.hp = Math.min(mods.maxHp, player.hp + def.heal);
+            addScore(def.score);
+            audio.heal();
+          }
         } else {
+          runCorn += def.corn;
+          addScore(def.score);
           audio.corn();
         }
-        runCorn += def.corn;
-        addScore(def.score);
         d.taken = true;
       }
     }

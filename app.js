@@ -917,16 +917,20 @@
   }
 
   function drawCombine() {
-    var p = player, x = p.x, y = p.y, w = p.w, h = p.h;
+    var p = player, x = p.x, w = p.w, h = p.h;
     var faceRight = p.facing > 0;
+    var attacking = p.attackTimer > 0;
+    var attackT = attacking ? 1 - p.attackTimer / ATTACK_DURATION : 0;
+    var y = p.y + (attacking ? Math.sin(time * 70) * 1 : 0);
+
     var frontX = faceRight ? x + w : x;
 
     ctx.fillStyle = COLOR.wheel;
     ctx.beginPath();
-    ctx.arc(x + w * 0.28, y + h, 3, 0, Math.PI * 2);
+    ctx.arc(x + w * 0.28, p.y + h, 3, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(x + w * 0.72, y + h, 3, 0, Math.PI * 2);
+    ctx.arc(x + w * 0.72, p.y + h, 3, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = COLOR.combineBody;
@@ -941,18 +945,44 @@
     ctx.strokeStyle = COLOR.outline;
     ctx.strokeRect(cabX + 0.5, y - 2.5, 4, 5);
 
-    var headerX = faceRight ? frontX - 2 : frontX;
+    var headerExtend = attacking ? 3 * Math.sin(attackT * Math.PI) : 0;
+    var headerX = faceRight ? frontX - 2 + headerExtend : frontX - headerExtend;
     ctx.fillStyle = COLOR.combineHeader;
     ctx.fillRect(headerX, y + h - 6, 4, 6);
     ctx.strokeStyle = COLOR.outline;
     ctx.strokeRect(headerX + 0.5, y + h - 5.5, 3, 5);
-    ctx.strokeStyle = COLOR.combineDark;
-    for (var t = 0; t < 3; t++) {
-      var ty = y + h - 5 + t * 2;
-      ctx.beginPath();
-      ctx.moveTo(headerX, ty);
-      ctx.lineTo(headerX + 4, ty);
-      ctx.stroke();
+
+    if (attacking) {
+      var spin = time * 40;
+      var hcx = headerX + 2, hcy = y + h - 3;
+      ctx.strokeStyle = COLOR.combineDark;
+      ctx.lineWidth = 1;
+      for (var r = 0; r < 3; r++) {
+        var ang = spin + r * (Math.PI * 2 / 3);
+        ctx.beginPath();
+        ctx.moveTo(hcx + Math.cos(ang) * 3, hcy + Math.sin(ang) * 3);
+        ctx.lineTo(hcx - Math.cos(ang) * 3, hcy - Math.sin(ang) * 3);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = COLOR.crateDark;
+      for (var d = 0; d < 3; d++) {
+        var fx = headerX + (faceRight ? 4 : -4) + Math.sin(time * 30 + d) * 2;
+        var fy = y + h - 2 - d * 2;
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.lineTo(fx + (faceRight ? 2 : -2), fy - 2);
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = COLOR.combineDark;
+      ctx.lineWidth = 1;
+      for (var t = 0; t < 3; t++) {
+        var ty = y + h - 5 + t * 2;
+        ctx.beginPath();
+        ctx.moveTo(headerX, ty);
+        ctx.lineTo(headerX + 4, ty);
+        ctx.stroke();
+      }
     }
   }
 

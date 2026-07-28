@@ -22,28 +22,187 @@
     var musicNextStepTime = 0;
     var musicStepIndex = 0;
     var musicBus = null;
+    var pulseCache = {};
 
-    // Warm pastoral loop: a G-Em-C-D folk progression across 4 bars of eighth
-    // notes, split into bass / melody / offbeat pluck layers and run through a
-    // lowpass so it reads as gentle Americana rather than chiptune.
-    var MUSIC_BPM = 92;
-    var MUSIC_STEP = 60 / MUSIC_BPM / 2;
-    var STEPS_PER_BAR = 8;
-    var MUSIC_LEN = STEPS_PER_BAR * 4;
+    // ---------------------------------------------------------- soundtrack --
+    // A full multi-section chiptune arrangement in the NES idiom: two pulse
+    // channels (lead + harmony) over a triangle bass and a noise kit. Patterns
+    // are written per bar and flattened into one long step table at startup,
+    // so the whole thing is one seamless ~5 minute loop rather than a vamp.
+    // 160bpm x 3200 sixteenths lands the loop on exactly 300 seconds.
+    var MUSIC_BPM = 160;
+    var MUSIC_STEP = 60 / MUSIC_BPM / 4;   // sixteenth notes
+    var STEPS_PER_BAR = 16;
 
-    var BASS_ROOTS = [98.00, 82.41, 65.41, 73.42];
-    var CHORD_TONES = [
-      [196.00, 246.94, 293.66],
-      [164.81, 196.00, 246.94],
-      [130.81, 164.81, 196.00],
-      [146.83, 220.00, 293.66]
+    var NOTE = (function () {
+      var names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      var table = {};
+      for (var o = 1; o <= 6; o++) {
+        for (var i = 0; i < 12; i++) {
+          table[names[i] + o] = 440 * Math.pow(2, ((12 * (o + 1) + i) - 69) / 12);
+        }
+      }
+      return table;
+    })();
+
+    // Hoedown harmony: G major I-IV-V with a flat-seven F for mixolydian
+    // twang, which is what makes it read as country rather than heroic NES.
+    var CHORDS = {
+      G: { notes: ['G', 'B', 'D'], bass: 'G2' },
+      C: { notes: ['C', 'E', 'G'], bass: 'C3' },
+      D: { notes: ['D', 'F#', 'A'], bass: 'D3' },
+      Em: { notes: ['E', 'G', 'B'], bass: 'E2' },
+      Am: { notes: ['A', 'C', 'E'], bass: 'A2' },
+      F: { notes: ['F', 'A', 'C'], bass: 'F2' }
+    };
+
+    // Boom-chick: root on the downbeat, fifth on beat three, with a walk-up
+    // into the next bar. Straight out of a bluegrass bass part.
+    function bassBar(chordName) {
+      var c = CHORDS[chordName];
+      var r = NOTE[c.bass];
+      var fifth = r * 1.4983;
+      var bar = new Array(16).fill(0);
+      bar[0] = r;
+      bar[4] = r * 2;
+      bar[8] = fifth;
+      bar[12] = r * 2;
+      bar[14] = fifth;
+      return bar;
+    }
+
+    // Banjo forward roll: continuous sixteenths cycling through the chord,
+    // low in the mix so it sits under the fiddle like a rhythm player.
+    function harmBar(chordName, octave) {
+      var c = CHORDS[chordName];
+      var o = octave || 4;
+      var t = [
+        NOTE[c.notes[0] + o], NOTE[c.notes[1] + o], NOTE[c.notes[2] + o],
+        NOTE[c.notes[0] + (o + 1)], NOTE[c.notes[2] + o], NOTE[c.notes[1] + o]
+      ];
+      var bar = [];
+      for (var i = 0; i < 16; i++) bar.push(t[i % t.length]);
+      return bar;
+    }
+
+    function L(str) {
+      // "G4 . . . B4 . . ." -> frequency array, '.' is a rest.
+      return str.trim().split(/\s+/).map(function (tok) {
+        return tok === '.' ? 0 : (NOTE[tok] || 0);
+      });
+    }
+
+    // Fiddle lines: G major pentatonic runs, sawing double-stop figures and
+    // the flat-seven (F5) leaning into the twang.
+    var LEADS = {
+      rest: L('. . . . . . . . . . . . . . . .'),
+      i1: L('G4 . B4 . D5 . B4 . G4 . . . D4 . . .'),
+      i2: L('E5 . D5 . B4 . A4 . G4 . . . . . . .'),
+      i3: L('D5 . E5 . G5 . E5 . D5 . B4 . . . . .'),
+      i4: L('G5 . . . D5 . . . B4 . . . G4 . . .'),
+      a1: L('G4 B4 D5 B4 G5 . D5 . E5 . D5 . B4 . . .'),
+      a2: L('C5 E5 G5 E5 C5 . G4 . A4 . C5 . E5 . . .'),
+      a3: L('D5 F#5 A5 F#5 D5 . A4 . B4 . D5 . F#5 . . .'),
+      a4: L('G5 . F#5 . E5 . D5 . B4 . A4 . G4 . . .'),
+      a5: L('B4 . D5 . G5 . D5 . E5 . D5 . B4 . G4 .'),
+      a6: L('G5 A5 B5 A5 G5 . E5 . D5 . B4 . G4 . . .'),
+      b1: L('E5 . G5 . B5 . G5 . E5 . D5 . B4 . . .'),
+      b2: L('A4 . C5 . E5 . C5 . A4 . G4 . E4 . . .'),
+      b3: L('F5 . E5 . D5 . C5 . B4 . A4 . G4 . . .'),
+      b4: L('D5 E5 F#5 G5 A5 . G5 . F#5 . E5 . D5 . . .'),
+      c1: L('G5 . . B5 . . A5 . . G5 . . E5 . . .'),
+      c2: L('D5 . . F#5 . . E5 . . D5 . . B4 . . .'),
+      c3: L('B5 . A5 . G5 . E5 . D5 . E5 . G5 . . .'),
+      c4: L('. G5 . E5 . D5 . B4 . D5 . E5 . G5 . .'),
+      d1: L('G4 . A4 . B4 . C5 . D5 . E5 . D5 . B4 .'),
+      d2: L('C5 . B4 . A4 . G4 . F5 . E5 . D5 . . .'),
+      d3: L('B4 D5 B4 G4 B4 . D5 . G5 . E5 . D5 . . .'),
+      d4: L('A4 . B4 . C5 . D5 . E5 . F#5 . G5 . . .'),
+      e1: L('G5 G5 . E5 E5 . D5 . B4 B4 . G4 . . . .'),
+      e2: L('D5 D5 . B4 B4 . G4 . A4 A4 . B4 . D5 . .'),
+      e3: L('G5 . B5 . D6 . B5 . G5 . E5 . D5 . . .'),
+      e4: L('F5 . E5 . D5 . B4 . G4 . B4 . D5 . . .')
+    };
+
+    // 'k' kick/stomp, 's' snare, 'h' hat, 'o' open hat. The busier patterns are
+    // a country train beat rather than a rock backbeat.
+    var DRUMS = {
+      quiet: '....h.......h...',
+      basic: 'k...s...k...s...',
+      drive: 'k..hs..hk..hs..h',
+      train: 'k.hhs.hhk.hhs.hh',
+      busy: 'k.hks.hhk.hks.hs',
+      fill: 'k...s...s.s.ssss',
+      none: '................'
+    };
+
+    function block(chords, leads, drum) {
+      return { chords: chords, leads: leads, drum: drum };
+    }
+
+    var SEC = {
+      intro: block(['G', 'G', 'C', 'C', 'D', 'D', 'G', 'G'],
+        ['i1', 'i2', 'i1', 'i3', 'i4', 'i2', 'i1', 'rest'], 'quiet'),
+      main: block(['G', 'C', 'G', 'D', 'G', 'C', 'D', 'G'],
+        ['a1', 'a2', 'a1', 'a3', 'a5', 'a2', 'a4', 'a1'], 'train'),
+      mainB: block(['G', 'C', 'G', 'D', 'Em', 'C', 'D', 'G'],
+        ['a5', 'a2', 'a6', 'a3', 'b1', 'a2', 'a4', 'a5'], 'busy'),
+      barnDance: block(['Em', 'D', 'G', 'C', 'Em', 'D', 'C', 'G'],
+        ['b1', 'b4', 'a1', 'a2', 'b1', 'b4', 'b3', 'a5'], 'train'),
+      hoedown: block(['C', 'D', 'G', 'G', 'C', 'D', 'G', 'G'],
+        ['c1', 'c2', 'c3', 'c4', 'c1', 'c2', 'c3', 'rest'], 'busy'),
+      porch: block(['G', 'D', 'Em', 'C', 'G', 'D', 'C', 'D'],
+        ['d1', 'd2', 'd3', 'd4', 'd1', 'd2', 'd4', 'rest'], 'basic'),
+      stomp: block(['G', 'G', 'F', 'F', 'C', 'C', 'D', 'D'],
+        ['e1', 'e2', 'e1', 'e2', 'e3', 'e4', 'e3', 'e4'], 'busy'),
+      breakdown: block(['G', 'G', 'C', 'C', 'Am', 'Am', 'D', 'D'],
+        ['rest', 'i1', 'rest', 'i3', 'rest', 'b2', 'i4', 'rest'], 'quiet'),
+      turn: block(['C', 'D', 'G', 'G'], ['c1', 'c2', 'a5', 'rest'], 'fill')
+    };
+
+    var ARRANGEMENT = [
+      'intro',
+      'main', 'main', 'mainB',
+      'barnDance', 'turn',
+      'main', 'hoedown',
+      'porch', 'porch',
+      'stomp', 'turn',
+      'mainB', 'barnDance',
+      'breakdown',
+      'main', 'hoedown',
+      'stomp', 'mainB',
+      'porch', 'turn',
+      'main', 'mainB',
+      'barnDance', 'hoedown',
+      'stomp', 'turn'
     ];
-    var MELODY = [
-      392.00, 0, 329.63, 0, 293.66, 0, 0, 0,
-      329.63, 0, 293.66, 0, 246.94, 0, 0, 0,
-      329.63, 0, 261.63, 0, 293.66, 0, 0, 0,
-      293.66, 0, 246.94, 0, 220.00, 0, 246.94, 0
-    ];
+
+
+    // Flatten the arrangement into one step table so scheduling is a lookup.
+    var SONG = (function () {
+      var steps = [];
+      for (var s = 0; s < ARRANGEMENT.length; s++) {
+        var sec = SEC[ARRANGEMENT[s]];
+        for (var b = 0; b < sec.chords.length; b++) {
+          var bass = bassBar(sec.chords[b]);
+          var harm = harmBar(sec.chords[b], 4);
+          var lead = LEADS[sec.leads[b % sec.leads.length]] || LEADS.rest;
+          var drum = DRUMS[sec.drum];
+          for (var i = 0; i < STEPS_PER_BAR; i++) {
+            steps.push({
+              bass: bass[i] || 0,
+              harm: harm[i] || 0,
+              lead: lead[i] || 0,
+              drum: drum.charAt(i)
+            });
+          }
+        }
+      }
+      return steps;
+    })();
+
+    var SONG_SECONDS = SONG.length * MUSIC_STEP;
+
 
     function ensure() {
       if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -101,31 +260,78 @@
     function musicOut() {
       var a = ensure();
       if (!musicBus) {
-        var filter = a.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 2200;
         var g = a.createGain();
-        g.gain.value = 0.9;
-        filter.connect(g);
+        g.gain.value = 0.85;
         g.connect(a.destination);
-        musicBus = filter;
+        musicBus = g;
       }
       return musicBus;
     }
 
-    function musicNote(freq, time, dur, type, vol) {
+    // Real pulse waves via the Fourier series for a given duty cycle, which is
+    // what gives the two lead channels their distinct NES character.
+    function pulseWave(duty) {
+      var a = ensure();
+      var key = String(duty);
+      if (pulseCache[key]) return pulseCache[key];
+      var n = 24;
+      var real = new Float32Array(n);
+      var imag = new Float32Array(n);
+      for (var i = 1; i < n; i++) {
+        imag[i] = (2 / (i * Math.PI)) * Math.sin(i * Math.PI * duty);
+      }
+      var w = a.createPeriodicWave(real, imag, { disableNormalization: false });
+      pulseCache[key] = w;
+      return w;
+    }
+
+    function chipNote(freq, time, dur, vol, duty, type) {
       var a = ensure();
       var osc = a.createOscillator();
       var gain = a.createGain();
-      osc.type = type;
+      if (type) osc.type = type;
+      else osc.setPeriodicWave(pulseWave(duty));
       osc.frequency.setValueAtTime(freq, time);
       gain.gain.setValueAtTime(0, time);
-      gain.gain.linearRampToValueAtTime(vol, time + Math.min(0.05, dur * 0.3));
+      gain.gain.linearRampToValueAtTime(vol, time + 0.006);
+      gain.gain.setValueAtTime(vol, time + dur * 0.55);
       gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
       osc.connect(gain);
       gain.connect(musicOut());
       osc.start(time);
       osc.stop(time + dur + 0.02);
+    }
+
+    function drumHit(sym, time) {
+      var a = ensure();
+      if (sym === 'k') {
+        var osc = a.createOscillator();
+        var g = a.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, time);
+        osc.frequency.exponentialRampToValueAtTime(45, time + 0.11);
+        g.gain.setValueAtTime(0.16, time);
+        g.gain.exponentialRampToValueAtTime(0.0001, time + 0.13);
+        osc.connect(g); g.connect(musicOut());
+        osc.start(time); osc.stop(time + 0.15);
+        return;
+      }
+      if (sym !== 's' && sym !== 'h' && sym !== 'o') return;
+
+      var dur = sym === 's' ? 0.13 : (sym === 'o' ? 0.1 : 0.035);
+      var size = Math.max(1, Math.floor(a.sampleRate * dur));
+      var buf = a.createBuffer(1, size, a.sampleRate);
+      var dat = buf.getChannelData(0);
+      for (var i = 0; i < size; i++) dat[i] = (Math.random() * 2 - 1) * (1 - i / size);
+      var src = a.createBufferSource();
+      src.buffer = buf;
+      var filt = a.createBiquadFilter();
+      filt.type = sym === 's' ? 'bandpass' : 'highpass';
+      filt.frequency.value = sym === 's' ? 1400 : 7000;
+      var g2 = a.createGain();
+      g2.gain.value = sym === 's' ? 0.11 : 0.045;
+      src.connect(filt); filt.connect(g2); g2.connect(musicOut());
+      src.start(time);
     }
 
     function startMusic() {
@@ -139,25 +345,19 @@
       if (!musicOn) return;
       var a = ensure();
       while (musicNextStepTime < a.currentTime + 0.25) {
-        var i = musicStepIndex % MUSIC_LEN;
-        var bar = Math.floor(i / STEPS_PER_BAR);
-        var beat = i % STEPS_PER_BAR;
+        var st = SONG[musicStepIndex % SONG.length];
         var t = musicNextStepTime;
 
-        if (beat === 0) musicNote(BASS_ROOTS[bar], t, MUSIC_STEP * 3.4, 'triangle', 0.075);
-        else if (beat === 4) musicNote(BASS_ROOTS[bar] * 1.5, t, MUSIC_STEP * 2.6, 'triangle', 0.048);
-
-        if (MELODY[i] > 0) musicNote(MELODY[i], t, MUSIC_STEP * 1.7, 'sine', 0.058);
-
-        if (beat % 2 === 1) {
-          var tones = CHORD_TONES[bar];
-          musicNote(tones[Math.floor(beat / 2) % tones.length], t, MUSIC_STEP * 0.85, 'triangle', 0.022);
-        }
+        if (st.bass) chipNote(st.bass, t, MUSIC_STEP * 1.7, 0.085, 0, 'triangle');
+        if (st.lead) chipNote(st.lead, t, MUSIC_STEP * 1.8, 0.05, 0.5);
+        if (st.harm) chipNote(st.harm, t, MUSIC_STEP * 0.9, 0.028, 0.25);
+        if (st.drum && st.drum !== '.') drumHit(st.drum, t);
 
         musicNextStepTime += MUSIC_STEP;
         musicStepIndex++;
       }
     }
+
 
     return {
       unlock: function () { ensure(); startMusic(); },
@@ -395,7 +595,6 @@
   var drops = [];
   var corns = [];
   var platforms = [];
-  var gapBridges = [];
   var waters = [];
   var levelWidth = 900;
   var exitX = 0;
@@ -430,7 +629,8 @@
       vx: 0, vy: 0, facing: 1, onGround: false,
       hp: mods.maxHp, hitInvuln: 0,
       attackTimer: 0, attackCooldown: 0, comboStep: 0, comboResetTimer: 0, hitThisSwing: {},
-      rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true
+      rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true,
+      dropThrough: 0
     };
   }
 
@@ -462,7 +662,6 @@
   function generateLevel() {
     var rng = makeRng(runSeed + depth * 7919);
     platforms = [];
-    gapBridges = [];
     waters = [];
     corns = [];
     enemies = [];
@@ -484,9 +683,8 @@
       if (i < slabCount - 1) {
         var gapW = Math.round(GAP_MIN + rng() * (GAP_MAX - GAP_MIN));
         var isWater = rng() < 0.4;
-        // Every gap gets a deployable bridge, water included - a plank you can
-        // see is much clearer than silently fording the stream.
-        gapBridges.push({ x: cursor, y: GROUND_Y, w: gapW, h: H - GROUND_Y, overWater: isWater });
+        // No bridges: gaps stay gaps for every form. The combine trades
+        // mobility for lethality rather than getting both.
         if (isWater) waters.push({ x: cursor, w: gapW });
         cursor += gapW;
       }
@@ -548,9 +746,6 @@
     if (hasBoss) enemies.push(makeBoss(exitX - 26, GROUND_Y - ENEMY_DEFS.scarecrow.h));
   }
 
-  function activePlatforms() {
-    return combineActive ? platforms.concat(gapBridges) : platforms;
-  }
 
   function waterSpanAt(x) {
     for (var i = 0; i < waters.length; i++) {
@@ -645,6 +840,7 @@
   var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'ShiftLeft', 'ShiftRight',
     'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Enter', 'Escape'];
   var jumpQueued = false, attackQueued = false, rollQueued = false, formQueued = false;
+  var dropQueued = false;
 
   window.addEventListener('keydown', function (e) {
     audio.unlock();
@@ -653,6 +849,7 @@
     if (e.repeat) return;
 
     if (e.code === 'KeyW') jumpQueued = true;
+    if (e.code === 'KeyS') dropQueued = true;
     if (e.code === 'Space') attackQueued = true;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') rollQueued = true;
     if (e.code === 'KeyF') formQueued = true;
@@ -715,7 +912,7 @@
   }
 
   // --------------------------------------------------------------- physics -
-  function updateGrounded(e, dt, plats) {
+  function updateGrounded(e, dt, plats, skipThin) {
     var prevBottom = e.y + e.h;
     e.x += e.vx * dt;
     e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
@@ -730,6 +927,9 @@
         var p = plats[i];
         var newBottom = e.y + e.h;
         var horizOverlap = e.x + e.w > p.x && e.x < p.x + p.w;
+        // Thin ledges are pass-through while dropping; solid ground never is,
+        // so pressing down can't drop you out of the level.
+        if (skipThin && p.h <= 10) continue;
         if (horizOverlap && prevBottom <= p.y + 0.5 && newBottom >= p.y) {
           e.y = p.y - e.h;
           e.vy = 0;
@@ -755,7 +955,7 @@
   }
 
   function updatePlayer(dt) {
-    var plats = activePlatforms();
+    var plats = platforms;
 
     if (player.hitInvuln > 0) player.hitInvuln -= dt;
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
@@ -790,6 +990,12 @@
 
     if (player.onGround) player.airJumpsLeft = mods.airJumps;
 
+    // Tap down to fall through a floating ledge. The window is brief so you
+    // clear the current ledge without sailing through the one below.
+    if (dropQueued && player.onGround && player.rolling <= 0) player.dropThrough = 0.2;
+    dropQueued = false;
+    if (player.dropThrough > 0) player.dropThrough -= dt;
+
     if (jumpQueued && !combineActive && player.rolling <= 0) {
       if (player.onGround) {
         player.vy = JUMP_VELOCITY;
@@ -823,7 +1029,7 @@
 
     if (player.attackTimer > 0) player.attackTimer -= dt;
 
-    updateGrounded(player, dt, plats);
+    updateGrounded(player, dt, plats, player.dropThrough > 0);
     if (player.fellOut) player.hp = 0;
 
     if (player.hp <= 0) {
@@ -891,7 +1097,7 @@
   // ground is rescued onto the nearest slab rather than falling out of play.
   function rescueDrop(d) {
     var best = null, bestDist = Infinity;
-    var plats = platforms.concat(gapBridges);
+    var plats = platforms;
     for (var i = 0; i < plats.length; i++) {
       var p = plats[i];
       if (p.h <= 10) continue;
@@ -910,7 +1116,7 @@
   }
 
   function updateDrops(dt) {
-    var plats = platforms.concat(gapBridges);
+    var plats = platforms;
     for (var i = 0; i < drops.length; i++) {
       var d = drops[i];
 
@@ -933,12 +1139,29 @@
               d.y = p.y - d.h;
               d.vy = 0; d.vx = 0;
               d.landed = true;
+              d.floating = false;
+              d.hooked = false;
               d.angle = 0;
               break;
             }
           }
         }
-        if (!d.landed && d.y > H + 4) rescueDrop(d);
+        if (!d.landed) {
+          // Meat that hits a stream floats on the surface instead of being
+          // relocated - it's still retrievable, just only with the pitchfork
+          // (or by bridging the gap with the combine).
+          var span = waterSpanAt(d.x + d.w / 2);
+          if (span && d.y + d.h >= GROUND_Y) {
+            d.landed = true;
+            d.floating = true;
+            d.vx = 0; d.vy = 0; d.angle = 0;
+            d.y = GROUND_Y - d.h + 1;
+          } else if (d.y > H + 4) {
+            // Dry pits go to the bottom of the screen where nothing can reach,
+            // so those get placed back on solid ground.
+            rescueDrop(d);
+          }
+        }
       }
 
       if (aabbOverlap(player.x, player.y, player.w, player.h, d.x, d.y, d.w, d.h)) {
@@ -1033,6 +1256,31 @@
     }
   }
 
+  // Swinging the fork hooks loose items in range and flings them back at the
+  // farmer, which is the only way to land anything floating in a stream.
+  function retrieveDrops() {
+    if (player.attackTimer <= 0 || combineActive) return;
+    var reach = mods.attackRange;
+    var boxX = player.facing > 0 ? player.x + player.w : player.x - reach;
+    var boxY = player.y - 6, boxW = reach, boxH = player.h + 14;
+    var px = player.x + player.w / 2, py = player.y + player.h / 2;
+
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (d.hooked) continue;
+      if (!aabbOverlap(boxX, boxY, boxW, boxH, d.x, d.y, d.w, d.h)) continue;
+
+      var dx = px - (d.x + d.w / 2), dy = py - (d.y + d.h / 2);
+      var dist = Math.hypot(dx, dy) || 1;
+      d.vx = (dx / dist) * 100;
+      d.vy = (dy / dist) * 100 - 30;
+      d.landed = false;
+      d.floating = false;
+      d.hooked = true;
+      d.spin = (Math.random() - 0.5) * 8;
+    }
+  }
+
   function checkCorn() {
     for (var i = 0; i < corns.length; i++) {
       var c = corns[i];
@@ -1092,7 +1340,7 @@
 
   function updateEnemy(e, dt) {
     var def = ENEMY_DEFS[e.type];
-    var plats = activePlatforms();
+    var plats = platforms;
     if (e.hitFlash > 0) e.hitFlash -= dt;
 
     if (e.type === 'boar') {
@@ -1278,6 +1526,7 @@
     if (state !== 'playing') return;
 
     resolveAttack();
+    retrieveDrops();
     checkCorn();
     if (state !== 'playing') return;
 
@@ -1408,63 +1657,12 @@
     ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
   }
 
-  function drawBridge(p) {
-    var deck = 6;
-
-    // Support posts first so the deck reads as sitting on top of them.
-    ctx.fillStyle = COLOR.crateDark;
-    [p.x + 2, p.x + p.w - 5].forEach(function (postX) {
-      ctx.fillRect(postX, p.y + deck, 3, H - (p.y + deck));
-      ctx.strokeStyle = COLOR.outline;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(postX + 0.5, p.y + deck + 0.5, 2, H - (p.y + deck) - 1);
-    });
-
-    // Diagonal cross-brace between the posts.
-    ctx.strokeStyle = COLOR.crateDark;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(p.x + 3, p.y + deck + 2);
-    ctx.lineTo(p.x + p.w - 3, H - 3);
-    ctx.moveTo(p.x + p.w - 3, p.y + deck + 2);
-    ctx.lineTo(p.x + 3, H - 3);
-    ctx.stroke();
-
-    ctx.fillStyle = COLOR.crate;
-    ctx.fillRect(p.x, p.y, p.w, deck);
-    ctx.strokeStyle = COLOR.crateDark;
-    for (var bx = p.x + 5; bx < p.x + p.w; bx += 5) {
-      ctx.beginPath();
-      ctx.moveTo(bx + 0.5, p.y);
-      ctx.lineTo(bx + 0.5, p.y + deck);
-      ctx.stroke();
-    }
-    ctx.strokeStyle = COLOR.outline;
-    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, deck - 1);
-
-    // Rails, so a deployed bridge is unmistakable at a glance.
-    ctx.strokeStyle = COLOR.crateDark;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(p.x + 1, p.y - 4);
-    ctx.lineTo(p.x + p.w - 1, p.y - 4);
-    ctx.stroke();
-    [p.x + 1, p.x + p.w / 2, p.x + p.w - 1].forEach(function (rx) {
-      ctx.beginPath();
-      ctx.moveTo(rx, p.y - 4);
-      ctx.lineTo(rx, p.y);
-      ctx.stroke();
-    });
-  }
 
   function drawPlatforms() {
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
       if (p.h > 10) drawSlab(p);
       else drawLedge(p);
-    }
-    if (combineActive) {
-      for (var b = 0; b < gapBridges.length; b++) drawBridge(gapBridges[b]);
     }
   }
 
@@ -2018,7 +2216,10 @@
   function drawDrops() {
     for (var i = 0; i < drops.length; i++) {
       var d = drops[i];
-      var bobY = d.landed ? Math.sin(time * 3 + d.bob) * 0.6 : 0;
+      // Floating items ride the stream with a slower, deeper bob.
+      var bobY = d.landed
+        ? Math.sin(time * (d.floating ? 2.2 : 3) + d.bob) * (d.floating ? 1.1 : 0.6)
+        : 0;
       ctx.save();
       ctx.translate(d.x + d.w / 2, d.y + d.h / 2 + bobY);
       ctx.rotate(d.angle);
@@ -2241,7 +2442,7 @@
       drawOverlayText([
         { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
-        { text: 'A/D MOVE   W JUMP (HOLD = HIGHER)   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
+        { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }

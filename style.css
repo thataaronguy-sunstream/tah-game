@@ -28,14 +28,11 @@ body {
 }
 
 canvas#game {
-  width: min(94vw, 960px);
-  aspect-ratio: 320 / 180;
+  width: min(96vw, 1280px);
+  aspect-ratio: 16 / 9;
   height: auto;
   background: #000;
   border: 1px solid #2a2f37;
-  image-rendering: pixelated;
-  image-rendering: -moz-crisp-edges;
-  image-rendering: crisp-edges;
 }
 
 .footer {

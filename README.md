@@ -17,4 +17,5 @@ Play: https://thataaronguy-sunstream.github.io/tah-game/
 - **Stomping works.** Landing on an enemy from above deals a hit and bounces you off: two stomps for a boar, one for a crow. The scarecrow is too big to vault off.
 - **Animals sometimes drop a heart.** Roughly one kill in five leaves one. It restores a point of health, or cashes out as a chunk of score plus a corn if you're already at full health.
 - **Boars that fall in water** paddle at the surface until they drown, and still drop bacon.
+- **Apple trees are a skill climb.** Trees run up to four tiers of narrow branches on alternating sides of the trunk; every step is inside a single jump, but the perches are only 12-18px wide. An apple crowns the tallest ones, worth ten corn, and a vulture is posted on it that dives when you get close.
 - **A mid-air jump is a luxury,** not an assumption. Every gap and platform is clearable with a single jump; Straw Wings is the priciest tree node and the rarest card in the upgrade pool.

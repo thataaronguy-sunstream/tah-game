@@ -398,6 +398,10 @@
         noiseBurst(0.22, 0.13);
       },
       // Sad-trombone descent for a drowning.
+      vultureCry: function () {
+        sweep(900, 340, 0.28, 'sawtooth', 0.09);
+        beep(420, 0.1, 'square', 0.05, 0.2);
+      },
       womp: function () {
         [311.13, 277.18, 233.08].forEach(function (f, i) {
           beep(f, 0.3, 'sawtooth', 0.12, i * 0.26);
@@ -445,14 +449,17 @@
   // Single-jump horizontal reach is ~43px (0.79s airtime x 55px/s), so gaps
   // are capped well under that; the air jump is margin, not a requirement.
   var GAP_MIN = 22, GAP_MAX = 30;
-  var BRANCH_BASE = 24, BRANCH_STEP = 20;
-  var APPLE_CORN = 4, APPLE_SCORE = 60;
+  // Taller trees, tighter perches: the climb is the skill test. Steps stay
+  // under a single jump's ~31px of lift so it's precision, not luck.
+  var BRANCH_BASE = 24, BRANCH_STEP = 22;
+  var BRANCH_W_MIN = 12, BRANCH_W_MAX = 18;
+  var APPLE_CORN = 10, APPLE_SCORE = 200;
 
   // Kept under the original key so existing skill-tree progress survives the
   // rename rather than silently resetting for anyone who has already played.
   var META_KEY = 'tah-game-deadfields-meta';
 
-  var SCORE_CORN = 25, SCORE_CROW = 50, SCORE_BOAR = 75, SCORE_BOSS = 500;
+  var SCORE_CORN = 25, SCORE_CROW = 50, SCORE_BOAR = 75, SCORE_VULTURE = 220, SCORE_BOSS = 500;
 
   var COLOR = {
     skyTop: '#6ec6f1', skyBottom: '#cdeeff', sun: '#ffe066', cloud: '#ffffff',
@@ -461,6 +468,7 @@
     crate: '#c68a45', crateDark: '#8a5a2c',
     player: '#3d6fd1', skin: '#f2c294', fork: '#d8dbe0', forkHandle: '#6a4526',
     crow: '#1e1e1e', crowBeak: '#4a4a52', crowSheen: '#3d4655', crowEye: '#e8c15a',
+    vulture: '#4a3f38', vultureDark: '#2f2823', vultureRuff: '#d8cdb8', vultureHead: '#c98d7a',
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
     barnWall: '#c1432f', barnRoof: '#7a2e1f', barnDoor: '#4a2c18', barnTrim: '#f5f1e6',
     soilWet: '#5f3c24', rock: '#9aa0a8', rockLight: '#d3d8de',
@@ -483,6 +491,7 @@
   var ENEMY_DEFS = {
     boar: { w: 14, h: 10, hp: 2, speed: 26, chargeSpeed: 72, detect: 55 },
     crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50 },
+    vulture: { w: 17, h: 13, hp: 4, speed: 26, diveSpeed: 104, detect: 74 },
     scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
   };
 
@@ -688,7 +697,8 @@
       id: enemyIdCounter, type: type, x: x, y: y, w: def.w, h: def.h,
       vx: 0, vy: 0, facing: -1, hp: def.hp, hitFlash: 0,
       spawnX: x, spawnY: y, patrolDir: 0, pauseTimer: 0,
-      phase: Math.random() * 10, onGround: false, fellOut: false, dead: false
+      phase: Math.random() * 10, onGround: false, fellOut: false, dead: false,
+      perchX: x, perchY: y, mode: 'perch', modeTimer: 0
     };
   }
 
@@ -759,29 +769,29 @@
       if (usableW < 24) continue;
 
       // Platforms are branches growing off a trunk, stacked in tiers you can
-      // climb. First branch is 24px up and each tier adds 20, both inside a
-      // single jump's ~31px of lift, so no tier needs the air jump.
+      // climb. Apple trees run the full 4 tiers and post a vulture at the top.
       if (usableW > 70 && rng() < 0.7) {
-        var tiers = 1 + Math.floor(rng() * 3);
-        var trunkX = Math.round(slab.x + 16 + rng() * Math.max(1, usableW - 32));
+        var bearsApple = rng() < 0.5;
+        var tiers = bearsApple ? 4 : (2 + Math.floor(rng() * 2));
+        var trunkX = Math.round(slab.x + 18 + rng() * Math.max(1, usableW - 36));
         var topBranchY = GROUND_Y - (BRANCH_BASE + (tiers - 1) * BRANCH_STEP);
-        trees.push({ x: trunkX, topY: topBranchY, tiers: tiers });
+        trees.push({ x: trunkX, topY: topBranchY, tiers: tiers, apple: bearsApple });
 
         for (var ti = 0; ti < tiers; ti++) {
           var by = GROUND_Y - (BRANCH_BASE + ti * BRANCH_STEP);
           var side = (ti % 2 === 0) ? 1 : -1;
-          var bw = 22 + Math.round(rng() * 12);
+          var bw = BRANCH_W_MIN + Math.round(rng() * (BRANCH_W_MAX - BRANCH_W_MIN));
           var bx = side > 0 ? trunkX + 2 : trunkX - 2 - bw;
           bx = Math.max(slab.x, Math.min(decorLimit - bw, bx));
-          platforms.push({ x: bx, y: by, w: bw, h: 6, branch: true, trunkX: trunkX });
-          if (rng() < 0.45) {
+          platforms.push({ x: bx, y: by, w: bw, h: 5, branch: true, side: side, trunkX: trunkX });
+          if (!bearsApple && ti > 0 && rng() < 0.4) {
             corns.push({ x: bx + bw / 2 - 2.5, y: by - 8, w: 5, h: 6, collected: false, kind: 'corn' });
           }
         }
 
-        // Sometimes an apple crowns the tree, worth more than a cob.
-        if (rng() < 0.45) {
-          corns.push({ x: trunkX - 2.5, y: topBranchY - 15, w: 6, h: 7, collected: false, kind: 'apple' });
+        if (bearsApple) {
+          corns.push({ x: trunkX - 3, y: topBranchY - 16, w: 6, h: 7, collected: false, kind: 'apple' });
+          enemies.push(makeEnemy('vulture', trunkX - 8, topBranchY - 30));
         }
       }
 
@@ -1755,7 +1765,11 @@
 
   function spawnDeathEffect(e) {
     var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
-    if (e.type === 'crow') {
+    if (e.type === 'vulture') {
+      emitParticles('feather', 14, cx, cy);
+      spawnDrop('roast', cx, cy);
+      spawnDrop('roast', cx, cy);
+    } else if (e.type === 'crow') {
       // Poof of black feathers, and the bird itself comes out oven-ready.
       emitParticles('feather', 8, cx, cy);
       spawnDrop('roast', cx, cy);
@@ -1778,6 +1792,7 @@
     // drops, so the two aren't paid out twice. The boss drops straw, not meat,
     // so it still pays its corn directly.
     if (e.type === 'crow') addScore(SCORE_CROW);
+    else if (e.type === 'vulture') addScore(SCORE_VULTURE);
     else if (e.type === 'scarecrow') { addScore(SCORE_BOSS); runCorn += 20; }
     else addScore(SCORE_BOAR);
     spawnDeathEffect(e);
@@ -1874,7 +1889,7 @@
       // instead of costing health. One damage per stomp, so with their existing
       // health that's two stomps for a boar and one for a crow. The boss is too
       // big to vault off.
-      if (!combineActive && player.vy > 0 && e.type !== 'scarecrow' &&
+      if (!combineActive && player.vy > 0 && e.type !== 'scarecrow' && e.type !== 'vulture' &&
         (player.y + player.h) < e.y + e.h * 0.6) {
         e.hp -= 1;
         e.hitFlash = 0.12;
@@ -1989,6 +2004,49 @@
         }
       }
       e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
+    } else if (e.type === 'vulture') {
+      e.phase += dt * 2.2;
+      if (e.hitFlash > 0) {
+        // Knocked back, then it recovers to the perch.
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        e.vx *= Math.max(0, 1 - 3 * dt);
+        e.vy *= Math.max(0, 1 - 3 * dt);
+        e.mode = 'return';
+      } else if (e.mode === 'perch') {
+        // Hunched over the fruit, shuffling, until something climbs near.
+        e.x += Math.sin(e.phase) * 4 * dt;
+        e.y = e.perchY + Math.sin(e.phase * 0.8) * 1.5;
+        var pdx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        var pdy = (player.y + player.h / 2) - (e.y + e.h / 2);
+        e.facing = pdx > 0 ? 1 : -1;
+        if (Math.hypot(pdx, pdy) < def.detect) {
+          e.mode = 'dive';
+          e.modeTimer = 1.5;
+          audio.vultureCry();
+        }
+      } else if (e.mode === 'dive') {
+        e.modeTimer -= dt;
+        var ddx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        var ddy = (player.y + player.h / 2) - (e.y + e.h / 2);
+        var dd = Math.hypot(ddx, ddy) || 1;
+        e.facing = ddx > 0 ? 1 : -1;
+        e.x += (ddx / dd) * def.diveSpeed * dt;
+        e.y += (ddy / dd) * def.diveSpeed * dt;
+        if (e.modeTimer <= 0) { e.mode = 'return'; }
+      } else {
+        var rdx = e.perchX - e.x, rdy = e.perchY - e.y;
+        var rd = Math.hypot(rdx, rdy) || 1;
+        e.facing = rdx > 0 ? 1 : -1;
+        if (rd < 2) {
+          e.mode = 'perch';
+        } else {
+          e.x += (rdx / rd) * def.speed * 1.8 * dt;
+          e.y += (rdy / rd) * def.speed * 1.8 * dt;
+        }
+      }
+      e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
+      e.y = Math.max(4, Math.min(GROUND_Y - e.h, e.y));
     } else if (e.type === 'scarecrow') {
       e.facing = player.x > e.x ? 1 : -1;
 
@@ -2227,23 +2285,22 @@
 
   function drawBranch(p) {
     ctx.fillStyle = COLOR.trunk;
-    ctx.fillRect(p.x, p.y, p.w, 5);
+    ctx.fillRect(p.x, p.y, p.w, 4);
     ctx.strokeStyle = COLOR.outline;
     ctx.lineWidth = 1;
-    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, 4);
+    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, 3);
     ctx.strokeStyle = COLOR.trunkDark;
-    ctx.lineWidth = 0.6;
-    for (var k = p.x + 4; k < p.x + p.w - 2; k += 6) {
+    ctx.lineWidth = 0.5;
+    for (var k = p.x + 3; k < p.x + p.w - 2; k += 5) {
       ctx.beginPath();
-      ctx.moveTo(k, p.y + 1.5);
-      ctx.lineTo(k + 2.5, p.y + 3.5);
+      ctx.moveTo(k, p.y + 1.2);
+      ctx.lineTo(k + 2, p.y + 2.8);
       ctx.stroke();
     }
-    // Leaf tufts along the limb.
     ctx.fillStyle = COLOR.leaf;
-    for (var lf = p.x + 3; lf < p.x + p.w - 1; lf += 7) {
+    for (var lf = p.x + 2; lf < p.x + p.w; lf += 5) {
       ctx.beginPath();
-      ctx.ellipse(lf, p.y - 1, 2.6, 1.6, -0.3, 0, Math.PI * 2);
+      ctx.ellipse(lf, p.y - 1.2, 2.3, 1.4, -0.3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -2251,35 +2308,63 @@
   function drawTrees() {
     for (var i = 0; i < trees.length; i++) {
       var t = trees[i];
+      var baseW = 7, topW = 3;
+      var span = GROUND_Y - t.topY;
+
+      // Tapered trunk with a root flare, so it reads as a tree not a post.
+      ctx.beginPath();
+      ctx.moveTo(t.x - baseW / 2 - 2, GROUND_Y);
+      ctx.quadraticCurveTo(t.x - baseW / 2, GROUND_Y - span * 0.35, t.x - topW / 2, t.topY - 4);
+      ctx.lineTo(t.x + topW / 2, t.topY - 4);
+      ctx.quadraticCurveTo(t.x + baseW / 2, GROUND_Y - span * 0.35, t.x + baseW / 2 + 2, GROUND_Y);
+      ctx.closePath();
       ctx.fillStyle = COLOR.trunk;
-      ctx.fillRect(t.x - 2, t.topY - 2, 4, GROUND_Y - t.topY + 2);
+      ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.lineWidth = 1;
-      ctx.strokeRect(t.x - 1.5, t.topY - 1.5, 3, GROUND_Y - t.topY + 1);
+      ctx.stroke();
+
       ctx.strokeStyle = COLOR.trunkDark;
       ctx.lineWidth = 0.6;
-      for (var g = t.topY + 6; g < GROUND_Y - 3; g += 7) {
+      for (var g = t.topY + 6; g < GROUND_Y - 4; g += 8) {
         ctx.beginPath();
-        ctx.moveTo(t.x - 1.5, g);
-        ctx.lineTo(t.x + 1.5, g + 1.5);
+        ctx.moveTo(t.x - 1.6, g);
+        ctx.lineTo(t.x + 0.4, g + 2.5);
         ctx.stroke();
       }
-      // Canopy crowning the trunk.
-      ctx.fillStyle = COLOR.leaf;
-      [[0, -7, 7], [-5, -4, 4.6], [5, -4, 4.6]].forEach(function (b) {
+
+      // Limbs joining trunk to each branch tier.
+      ctx.strokeStyle = COLOR.trunk;
+      ctx.lineWidth = 2.4;
+      for (var ti = 0; ti < t.tiers; ti++) {
+        var by = GROUND_Y - (BRANCH_BASE + ti * BRANCH_STEP);
+        var side = (ti % 2 === 0) ? 1 : -1;
         ctx.beginPath();
-        ctx.arc(t.x + b[0], t.topY + b[1], b[2], 0, Math.PI * 2);
-        ctx.fill();
-      });
+        ctx.moveTo(t.x, by + 5);
+        ctx.quadraticCurveTo(t.x + side * 4, by + 3, t.x + side * 6, by + 2);
+        ctx.stroke();
+      }
+
+      // Canopy: overlapping clusters rather than one blob.
+      var cy = t.topY - 6;
+      [[0, -6, 8], [-7, -1, 5.6], [7, -1, 5.6], [-3, -11, 5], [4, -10, 5.4]]
+        .forEach(function (b) {
+          ctx.fillStyle = COLOR.leaf;
+          ctx.beginPath();
+          ctx.arc(t.x + b[0], cy + b[1], b[2], 0, Math.PI * 2);
+          ctx.fill();
+        });
       ctx.strokeStyle = COLOR.outline;
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.arc(t.x, t.topY - 7, 7, Math.PI * 0.9, Math.PI * 2.1);
+      ctx.arc(t.x, cy - 6, 8, Math.PI * 0.85, Math.PI * 2.15);
       ctx.stroke();
-      ctx.fillStyle = COLOR.leafLight;
-      ctx.beginPath();
-      ctx.arc(t.x - 2.5, t.topY - 9, 2.2, 0, Math.PI * 2);
-      ctx.fill();
+      [[-3.5, -8.5, 2.4], [3.2, -12, 1.9], [-6, -3, 1.7]].forEach(function (h) {
+        ctx.fillStyle = COLOR.leafLight;
+        ctx.beginPath();
+        ctx.arc(t.x + h[0], cy + h[1], h[2], 0, Math.PI * 2);
+        ctx.fill();
+      });
     }
   }
 
@@ -2754,6 +2839,106 @@
       ctx.fillStyle = COLOR.crowEye;
       ctx.beginPath();
       ctx.arc(3.9, -2.3, 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    } else if (e.type === 'vulture') {
+      // Bigger and nastier than a crow: hunched shoulders, ragged wings, bald
+      // pink head and a hooked beak. Wings spread wide while diving.
+      var diving = e.mode === 'dive';
+      var vflap = diving ? 1 : Math.sin(e.phase * 2) * 0.6;
+      var vink = flashing ? COLOR.flash : COLOR.vulture;
+
+      ctx.save();
+      ctx.translate(e.x + e.w / 2, e.y + e.h / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 0.7;
+
+      // Far wing.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.vultureDark;
+      ctx.beginPath();
+      ctx.moveTo(0, -1);
+      ctx.quadraticCurveTo(-5, -4 - vflap * 4, -10, -1 - vflap * 5);
+      ctx.quadraticCurveTo(-5, 1.5, 0, 1.5);
+      ctx.closePath();
+      ctx.fill();
+
+      // Tail.
+      ctx.fillStyle = vink;
+      ctx.beginPath();
+      ctx.moveTo(-3.5, -1);
+      ctx.lineTo(-9.5, -2.5);
+      ctx.lineTo(-8.5, 0);
+      ctx.lineTo(-9.5, 2.5);
+      ctx.lineTo(-3.5, 1.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+
+      // Heavy hunched body.
+      ctx.beginPath();
+      ctx.moveTo(-4, -2);
+      ctx.bezierCurveTo(-1.5, -5.2, 3, -4.6, 4.4, -1.6);
+      ctx.bezierCurveTo(5.6, 0.6, 3.6, 3.4, 0.6, 3.6);
+      ctx.bezierCurveTo(-2.4, 3.8, -4.2, 1.4, -4, -2);
+      ctx.closePath();
+      ctx.fillStyle = vink;
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+
+      // Ruff of pale neck feathers.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.vultureRuff;
+      ctx.beginPath();
+      ctx.ellipse(3.0, -2.6, 2.6, 1.9, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+
+      // Bald head and hooked beak.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.vultureHead;
+      ctx.beginPath();
+      ctx.arc(5.0, -4.4, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.crowBeak;
+      ctx.beginPath();
+      ctx.moveTo(6.4, -5.2);
+      ctx.lineTo(9.4, -4.2);
+      ctx.quadraticCurveTo(8.4, -2.6, 6.4, -3.0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.4;
+      ctx.stroke();
+
+      // Near wing, spread on the dive.
+      ctx.fillStyle = vink;
+      ctx.beginPath();
+      ctx.moveTo(0.8, -2);
+      ctx.quadraticCurveTo(-4, -6 - vflap * 5, -9.5, -3.5 - vflap * 6);
+      ctx.quadraticCurveTo(-4, -0.5, 1.2, -0.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      ctx.strokeStyle = flashing ? COLOR.flash : COLOR.vultureDark;
+      ctx.lineWidth = 0.5;
+      for (var vf = 0; vf < 4; vf++) {
+        ctx.beginPath();
+        ctx.moveTo(-1.6 - vf * 1.4, -2.4 - vflap * 2.6 - vf * 0.3);
+        ctx.lineTo(-5.2 - vf * 1.2, -3.6 - vflap * 5 - vf * 0.2);
+        ctx.stroke();
+      }
+
+      // Eye.
+      ctx.fillStyle = COLOR.bad;
+      ctx.beginPath();
+      ctx.arc(5.5, -4.9, 0.6, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.restore();

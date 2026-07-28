@@ -239,7 +239,8 @@
     panelBg: 'rgba(30,26,20,0.16)', cardBg: '#f5f1e6', cardSel: '#ffe066',
     waterTop: '#5ec8e8', waterDeep: '#1f6f9e', waterSurface: '#d6f6ff',
     corn: '#f2c14e', cornHusk: '#4a8f3f',
-    feather: '#1e1e1e', featherEdge: '#55555f', bacon: '#e8836f', baconStripe: '#8a2e22', straw: '#e0c15a',
+    feather: '#1e1e1e', featherEdge: '#55555f',
+    bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
     scarecrowSack: '#d8b978', scarecrowBody: '#8a6a3a', scarecrowDark: '#5c4526', hat: '#4a3f38',
     combineBody: '#c1432f', combineDark: '#7a2e1f', combineHeader: '#e0b93a', wheel: '#2a1f18'
   };
@@ -860,7 +861,9 @@
         x: cx, y: cy,
         vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - (kind === 'feather' ? 10 : 20),
         life: life, maxLife: life, kind: kind,
-        angle: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 6
+        angle: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 6,
+        // Per-strip ripple offset so no two rashers curl identically.
+        wave: Math.random() * Math.PI * 2
       });
     }
   }
@@ -1686,17 +1689,50 @@
         ctx.lineTo(3, 0);
         ctx.stroke();
       } else {
-        ctx.fillStyle = COLOR.bacon;
-        ctx.fillRect(-2.5, -1.5, 5, 3);
-        ctx.strokeStyle = COLOR.baconStripe;
-        ctx.lineWidth = 0.6;
+        // A rippled rasher rather than a flat chip: wavy top and bottom edges
+        // with a pale fat streak following the same curve.
+        var L = 7.5, TH = 2.6, AMP = 0.85, SEG = 8;
+        var w0 = p.wave || 0;
+        function edgeY(t, off) {
+          return Math.sin(t * Math.PI * 2.2 + w0) * AMP + off;
+        }
+
         ctx.beginPath();
-        ctx.moveTo(-2, -1);
-        ctx.lineTo(2, 1);
-        ctx.stroke();
+        for (var i = 0; i <= SEG; i++) {
+          var t = i / SEG, ex = -L / 2 + t * L;
+          if (i === 0) ctx.moveTo(ex, edgeY(t, -TH / 2));
+          else ctx.lineTo(ex, edgeY(t, -TH / 2));
+        }
+        for (var j = SEG; j >= 0; j--) {
+          var t2 = j / SEG, ex2 = -L / 2 + t2 * L;
+          ctx.lineTo(ex2, edgeY(t2, TH / 2));
+        }
+        ctx.closePath();
+        ctx.fillStyle = COLOR.bacon;
+        ctx.fill();
         ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.4;
+        ctx.stroke();
+
+        ctx.strokeStyle = COLOR.baconFat;
+        ctx.lineWidth = 0.75;
+        ctx.beginPath();
+        for (var k = 0; k <= SEG; k++) {
+          var t3 = k / SEG, ex3 = -L / 2 + t3 * L;
+          if (k === 0) ctx.moveTo(ex3, edgeY(t3, -0.55));
+          else ctx.lineTo(ex3, edgeY(t3, -0.55));
+        }
+        ctx.stroke();
+
+        ctx.strokeStyle = COLOR.baconStripe;
         ctx.lineWidth = 0.5;
-        ctx.strokeRect(-2.5, -1.5, 5, 3);
+        ctx.beginPath();
+        for (var m = 0; m <= SEG; m++) {
+          var t4 = m / SEG, ex4 = -L / 2 + t4 * L;
+          if (m === 0) ctx.moveTo(ex4, edgeY(t4, 0.75));
+          else ctx.lineTo(ex4, edgeY(t4, 0.75));
+        }
+        ctx.stroke();
       }
       ctx.restore();
     }

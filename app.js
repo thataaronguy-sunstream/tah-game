@@ -458,6 +458,7 @@
   // under a single jump's ~31px of lift so it's precision, not luck.
   var BRANCH_BASE = 24, BRANCH_STEP = 22;
   var BRANCH_W_MIN = 12, BRANCH_W_MAX = 18;
+  var BALE_H = 13;
   var APPLE_CORN = 10, APPLE_SCORE = 200;
 
   // Kept under the original key so existing skill-tree progress survives the
@@ -477,6 +478,7 @@
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
     barnWall: '#c1432f', barnRoof: '#7a2e1f', barnDoor: '#4a2c18', barnTrim: '#f5f1e6',
     soilWet: '#5f3c24', rock: '#9aa0a8', rockLight: '#d3d8de',
+    hay: '#d9b465', hayDark: '#a8842f', hayLight: '#f0dc9a',
     trunk: '#6a4526', trunkDark: '#4a2f18', leaf: '#3f8f3a', leafLight: '#6fc257',
     apple: '#d63a2f',
     siloBody: '#d8cdb8', siloDark: '#a89a80', siloRoof: '#7a8088',
@@ -484,7 +486,7 @@
     bad: '#e0392a', good: '#15702e', flash: '#ffffff',
     panelBg: 'rgba(30,26,20,0.16)', cardBg: '#f5f1e6', cardSel: '#ffe066',
     waterTop: '#5ec8e8', waterDeep: '#1f6f9e', waterSurface: '#d6f6ff',
-    corn: '#f2c14e', cornHusk: '#4a8f3f',
+    corn: '#f5cb56', cornKernel: '#c48b1f', cornSilk: '#efe0a8', cornHusk: '#4a8f3f',
     feather: '#1e1e1e', featherEdge: '#55555f',
     bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
     roast: '#c9822f', roastLight: '#f0c477', roastDark: '#9c5a1e',
@@ -669,6 +671,7 @@
   var treeIndex = 0;
   var barnBlockedMsgTimer = 0;
   var slamFx = 0;
+  var lastBanked = 0, lastLost = 0;
   var drownSeq = null;
   var toastText = '';
   var toastTimer = 0;
@@ -782,7 +785,7 @@
 
       // Platforms are branches growing off a trunk, stacked in tiers you can
       // climb. Apple trees run the full 4 tiers and post a vulture at the top.
-      if (usableW > 70 && rng() < 0.7) {
+      if (usableW > 70 && rng() < 0.34) {
         var bearsApple = appleQuota > 0 && rng() < 0.45;
         if (bearsApple) appleQuota--;
         var tiers = bearsApple ? 4 : (2 + Math.floor(rng() * 2));
@@ -805,6 +808,19 @@
         if (bearsApple) {
           corns.push({ x: trunkX - 3, y: topBranchY - 16, w: 6, h: 7, collected: false, kind: 'apple' });
           enemies.push(makeEnemy('vulture', trunkX - 8, topBranchY - 30));
+        }
+      }
+
+      // Round bales dotted along the field: a low step up, and something to
+      // break up the ground now that trees are scarce.
+      var baleCount = rng() < 0.55 ? (rng() < 0.35 ? 2 : 1) : 0;
+      for (var hb = 0; hb < baleCount; hb++) {
+        var haW = 15;
+        var haX = Math.round(slab.x + 8 + rng() * Math.max(1, usableW - haW - 16));
+        if (haX + haW > decorLimit) continue;
+        platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: 5, bale: true });
+        if (rng() < 0.35) {
+          corns.push({ x: haX + haW / 2 - 2.5, y: GROUND_Y - BALE_H - 9, w: 5, h: 6, collected: false, kind: 'corn' });
         }
       }
 
@@ -908,7 +924,11 @@
   }
 
   function endRun(victorious) {
-    meta.bankedCorn += runCorn;
+    // Escape with the harvest and you keep all of it. Die out there and the
+    // crows get most of it - only a tenth makes it home.
+    lastBanked = victorious ? runCorn : Math.floor(runCorn * DEATH_CORN_KEPT);
+    lastLost = runCorn - lastBanked;
+    meta.bankedCorn += lastBanked;
     if (depth > meta.bestDepth) meta.bestDepth = depth;
     if (runScore > meta.bestScore) meta.bestScore = runScore;
     saveMeta();
@@ -1347,6 +1367,7 @@
 
     if (state === 'title') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
+      else if (e.code === 'KeyF') enterFarm();   // debug: skip straight to the farm
       else startRun();
       return;
     }
@@ -1652,6 +1673,7 @@
   };
   var HEALTH_DROP_CHANCE = 0.22;
   var HEART_FULL_SCORE = 60;
+  var DEATH_CORN_KEPT = 0.1;
 
   function spawnDrop(kind, cx, cy) {
     var def = DROP_DEFS[kind];
@@ -2325,6 +2347,40 @@
 
 
 
+
+  function drawBale(p) {
+    var cx = p.x + p.w / 2;
+    var cy = GROUND_Y - BALE_H / 2 - 0.5;
+    var rx = p.w / 2, ry = BALE_H / 2;
+
+    ctx.fillStyle = COLOR.hay;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Concentric banding reads as rolled hay rather than a boulder.
+    ctx.strokeStyle = COLOR.hayDark;
+    ctx.lineWidth = 0.7;
+    for (var b = 1; b <= 2; b++) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx * (1 - b * 0.28), ry * (1 - b * 0.28), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Loose straw catching the light along the top.
+    ctx.strokeStyle = COLOR.hayLight;
+    ctx.lineWidth = 0.6;
+    for (var t = -2; t <= 2; t++) {
+      var a = -Math.PI / 2 + t * 0.36;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * rx * 0.72, cy + Math.sin(a) * ry * 0.72);
+      ctx.lineTo(cx + Math.cos(a) * rx * 1.02, cy + Math.sin(a) * ry * 1.02);
+      ctx.stroke();
+    }
+  }
+
   function drawBranch(p) {
     ctx.fillStyle = COLOR.trunk;
     ctx.fillRect(p.x, p.y, p.w, 4);
@@ -2414,6 +2470,7 @@
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
       if (p.h > 10) drawSlab(p);
+      else if (p.bale) drawBale(p);
       else if (p.branch) drawBranch(p);
       else drawLedge(p);
     }
@@ -2510,20 +2567,61 @@
         continue;
       }
 
+      // An ear of corn: tapered cob with staggered rows of kernels and husk
+      // leaves peeling back. The kernel rows are what actually make it read
+      // as corn rather than a yellow blob.
+      ctx.save();
+      ctx.translate(cx, cy);
+
       ctx.fillStyle = COLOR.cornHusk;
+      [-1, 1].forEach(function (sgn) {
+        ctx.beginPath();
+        ctx.moveTo(sgn * 0.4, 3.0);
+        ctx.quadraticCurveTo(sgn * 3.6, 1.4, sgn * 3.0, -2.6);
+        ctx.quadraticCurveTo(sgn * 1.4, 0.2, sgn * 0.4, 3.0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.4;
+        ctx.stroke();
+      });
+
+      ctx.strokeStyle = COLOR.cornSilk;
+      ctx.lineWidth = 0.5;
+      [-0.8, 0, 0.8].forEach(function (sx) {
+        ctx.beginPath();
+        ctx.moveTo(sx * 0.6, -3.2);
+        ctx.quadraticCurveTo(sx * 1.6, -4.6, sx * 2.2, -5.2);
+        ctx.stroke();
+      });
+
       ctx.beginPath();
-      ctx.moveTo(cx, cy - c.h / 2 - 2);
-      ctx.lineTo(cx - 2, cy - c.h / 2 + 1);
-      ctx.lineTo(cx + 2, cy - c.h / 2 + 1);
+      ctx.moveTo(0, -3.5);
+      ctx.bezierCurveTo(1.8, -2.9, 2.1, 0, 1.6, 2.2);
+      ctx.bezierCurveTo(1.0, 3.3, -1.0, 3.3, -1.6, 2.2);
+      ctx.bezierCurveTo(-2.1, 0, -1.8, -2.9, 0, -3.5);
       ctx.closePath();
-      ctx.fill();
       ctx.fillStyle = COLOR.corn;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.6;
       ctx.stroke();
+
+      ctx.fillStyle = COLOR.cornKernel;
+      for (var kr = 0; kr < 5; kr++) {
+        var ky = -2.5 + kr * 1.25;
+        var stagger = (kr % 2) * 0.45;
+        var cols = Math.abs(ky) > 2 ? 1 : 2;
+        for (var kc = -cols; kc <= cols; kc++) {
+          var kx = kc * 0.85 + stagger;
+          if (Math.abs(kx) > 1.5) continue;
+          ctx.beginPath();
+          ctx.arc(kx, ky, 0.34, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      ctx.restore();
     }
   }
 
@@ -3494,7 +3592,8 @@
         { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
-        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }
+        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 },
+        { text: 'F: HOMESTEAD (DEBUG)', size: 5, color: COLOR.dim }
       ]);
     } else if (state === 'hub') {
       drawHub();
@@ -3513,7 +3612,8 @@
         { text: 'YOU DIED', size: 16, color: COLOR.bad },
         { text: '', size: 4 },
         { text: 'DEPTH ' + depth + '   SCORE ' + pad(runScore), size: 7 },
-        { text: 'BANKED ' + runCorn + ' CORN (TOTAL ' + meta.bankedCorn + ')', size: 6, color: COLOR.dim },
+        { text: 'CARRIED ' + runCorn + '   LOST ' + lastLost + '   KEPT ' + lastBanked, size: 6, color: COLOR.bad },
+        { text: 'BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'ANY KEY: NEW RUN     H: FARMSTEAD', size: 7 }
       ]);
@@ -3522,7 +3622,7 @@
         { text: 'HARVEST COMPLETE', size: 13, color: COLOR.good },
         { text: '', size: 4 },
         { text: 'SCORE ' + pad(runScore) + '   CORN ' + runCorn, size: 7 },
-        { text: 'TOTAL BANKED ' + meta.bankedCorn, size: 6, color: COLOR.dim },
+        { text: 'KEPT ALL ' + lastBanked + '   TOTAL BANKED ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'F: HOMESTEAD   H: FARMSTEAD   ANY KEY: NEW RUN', size: 6 }
       ]);

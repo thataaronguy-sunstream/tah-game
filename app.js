@@ -436,7 +436,7 @@
     soil: '#8a5a3a', soilSeam: 'rgba(42,31,24,0.18)', grass: '#5fbf3f', grassLight: '#7ad653',
     crate: '#c68a45', crateDark: '#8a5a2c',
     player: '#3d6fd1', skin: '#f2c294', fork: '#d8dbe0', forkHandle: '#6a4526',
-    crow: '#1e1e1e', crowBeak: '#f2a63d',
+    crow: '#1e1e1e', crowBeak: '#4a4a52', crowSheen: '#3d4655', crowEye: '#e8c15a',
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
     barnWall: '#c1432f', barnRoof: '#7a2e1f', barnDoor: '#4a2c18', barnTrim: '#f5f1e6',
     siloBody: '#d8cdb8', siloDark: '#a89a80', siloRoof: '#7a8088',
@@ -476,7 +476,9 @@
   var TREE = [
     { id: 'vigor', name: 'VIGOR', desc: '+1 STARTING HEART', cost: 60, max: 3 },
     { id: 'richsoil', name: 'RICH SOIL', desc: '+1 CORN PER PICKUP', cost: 80, max: 2 },
-    { id: 'toolshed', name: 'TOOLSHED', desc: 'COMBINE JOINS UPGRADE POOL', cost: 120, max: 1 },
+    // The combine is the biggest power spike in the game, so the toolshed is
+    // far and away the priciest thing on the board.
+    { id: 'toolshed', name: 'TOOLSHED', desc: 'COMBINE JOINS UPGRADE POOL', cost: 900, max: 1 },
     { id: 'headstart', name: 'HEAD START', desc: 'BEGIN EACH RUN WITH AN UPGRADE', cost: 150, max: 1 },
     { id: 'gristmill', name: 'GRISTMILL', desc: '+25% SCORE EARNED', cost: 100, max: 2 },
     { id: 'strawwings', name: 'STRAW WINGS', desc: 'START EVERY RUN WITH AN AIR JUMP', cost: 400, max: 1 }
@@ -2052,50 +2054,103 @@
 
       ctx.restore();
     } else if (e.type === 'crow') {
-      var flap = Math.sin(e.phase * 2) * 3;
-      var ccx = e.x + e.w / 2, ccy = e.y + e.h / 2;
-      var headX = ccx + e.facing * 3, headY = ccy - 1.5;
+      // Drawn facing +x and mirrored: a sleek corvid rather than a blob -
+      // long wedge tail, thick straight beak, and two wings whose feather
+      // tips separate on the downbeat.
+      var flap = Math.sin(e.phase * 2);
+      var ink = flashing ? COLOR.flash : COLOR.crow;
 
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.crow;
+      ctx.save();
+      ctx.translate(e.x + e.w / 2, e.y + e.h / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 0.6;
+
+      // Far wing sits behind the body and lags the near wing slightly.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.crowSheen;
       ctx.beginPath();
-      ctx.moveTo(ccx - e.facing * 3, ccy);
-      ctx.lineTo(ccx - e.facing * 6, ccy - 2);
-      ctx.lineTo(ccx - e.facing * 6, ccy + 2);
+      ctx.moveTo(0.2, -0.6);
+      ctx.quadraticCurveTo(-2.6, -2.4 - flap * 3.0, -5.4, -0.8 - flap * 3.4);
+      ctx.quadraticCurveTo(-2.8, 0.4, 0.2, 0.8);
       ctx.closePath();
       ctx.fill();
 
+      // Tail: a long wedge with two feather notches.
+      ctx.fillStyle = ink;
       ctx.beginPath();
-      ctx.moveTo(ccx - e.facing * 1, ccy - 0.5);
-      ctx.lineTo(ccx - e.facing * 4.5, ccy - 3 - flap);
-      ctx.lineTo(ccx + e.facing * 0.5, ccy - 1);
+      ctx.moveTo(-2.6, -0.4);
+      ctx.lineTo(-7.4, -1.9);
+      ctx.lineTo(-6.4, -0.5);
+      ctx.lineTo(-7.6, 0.1);
+      ctx.lineTo(-6.3, 0.7);
+      ctx.lineTo(-7.2, 1.8);
+      ctx.lineTo(-2.6, 1.0);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.stroke();
 
-      ctx.fillStyle = flashing ? COLOR.flash : COLOR.crow;
+      // Streamlined body, chest forward.
+      ctx.fillStyle = ink;
       ctx.beginPath();
-      ctx.ellipse(ccx, ccy + 1, 3.2, 2.6, 0, 0, Math.PI * 2);
+      ctx.moveTo(-3.0, -1.2);
+      ctx.bezierCurveTo(-1.0, -2.6, 1.8, -2.4, 2.9, -1.0);
+      ctx.bezierCurveTo(3.8, 0.1, 2.6, 1.9, 0.6, 2.2);
+      ctx.bezierCurveTo(-1.4, 2.4, -2.8, 1.4, -3.0, -1.2);
+      ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.stroke();
 
+      // Head on a short neck.
       ctx.beginPath();
-      ctx.arc(headX, headY, 2, 0, Math.PI * 2);
+      ctx.arc(3.4, -1.9, 1.9, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.stroke();
 
+      // Thick straight corvid beak.
       ctx.fillStyle = flashing ? COLOR.flash : COLOR.crowBeak;
       ctx.beginPath();
-      ctx.moveTo(headX + e.facing * 2, headY);
-      ctx.lineTo(headX + e.facing * 4, headY + 0.5);
-      ctx.lineTo(headX + e.facing * 2, headY + 1.5);
+      ctx.moveTo(4.7, -2.5);
+      ctx.lineTo(7.7, -1.5);
+      ctx.lineTo(4.7, -0.6);
       ctx.closePath();
       ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(4.7, -1.6);
+      ctx.lineTo(7.4, -1.5);
+      ctx.stroke();
 
-      ctx.fillStyle = COLOR.outline;
-      ctx.fillRect(headX - 0.5, headY - 1.5, 1, 1);
+      // Near wing, over the body, with split primaries.
+      ctx.fillStyle = ink;
+      ctx.beginPath();
+      ctx.moveTo(0.8, -1.2);
+      ctx.quadraticCurveTo(-1.8, -3.6 - flap * 4.0, -5.0, -2.4 - flap * 4.6);
+      ctx.quadraticCurveTo(-2.2, -0.6, 1.0, -0.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+      ctx.strokeStyle = flashing ? COLOR.flash : COLOR.crowSheen;
+      ctx.lineWidth = 0.45;
+      for (var fq = 0; fq < 3; fq++) {
+        ctx.beginPath();
+        ctx.moveTo(-1.2 - fq * 0.9, -1.6 - flap * 2.2 - fq * 0.3);
+        ctx.lineTo(-3.4 - fq * 0.7, -2.6 - flap * 4.0 - fq * 0.2);
+        ctx.stroke();
+      }
+
+      // Eye.
+      ctx.fillStyle = COLOR.crowEye;
+      ctx.beginPath();
+      ctx.arc(3.9, -2.3, 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
     } else if (e.type === 'scarecrow') {
       var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
       var scx = sx + sw / 2;

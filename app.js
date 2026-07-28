@@ -434,7 +434,7 @@
   var DODGE_SPEED = 160;
   var DODGE_DURATION = 0.22;
   var DODGE_COOLDOWN_BASE = 0.5;
-  var ATTACK_DURATION = 0.16;
+  var ATTACK_DURATION = 0.19;
   var ATTACK_COOLDOWN_BASE = 0.26;
   var COMBO_WINDOW = 0.45;
 
@@ -491,7 +491,9 @@
   var ENEMY_DEFS = {
     boar: { w: 14, h: 10, hp: 2, speed: 26, chargeSpeed: 72, detect: 55 },
     crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50 },
-    vulture: { w: 17, h: 13, hp: 4, speed: 26, diveSpeed: 112, detect: 130 },
+    // 3 pitchfork hits, or a slam plus one. Tanky enough to be a fight,
+    // short enough that you're not chasing it round the tree all day.
+    vulture: { w: 17, h: 13, hp: 3, speed: 26, diveSpeed: 112, detect: 130 },
     scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
   };
 
@@ -1809,7 +1811,9 @@
     if (player.attackTimer <= 0) return;
     var reach = mods.attackRange;
     var boxX = player.facing > 0 ? player.x + player.w : player.x - reach;
-    var boxY = player.y - 2, boxW = reach, boxH = player.h + 4;
+    // Tall enough to match the overhead arc, so the swing connects with
+    // anything it visibly passes through - including birds above your head.
+    var boxY = player.y - 11, boxW = reach, boxH = player.h + 15;
     for (var i = enemies.length - 1; i >= 0; i--) {
       var e = enemies[i];
       if (e.dead || player.hitThisSwing[e.id]) continue;
@@ -2652,7 +2656,9 @@
     var handX = cx + p.facing * 3, handY = cy + 7;
     if (p.attackTimer > 0) {
       var t = 1 - p.attackTimer / ATTACK_DURATION;
-      var sweepArc = (p.comboStep === 0) ? [-0.6, 0.9] : [0.9, -0.6];
+      // A full overhead chop: starts up and behind, passes over the head and
+      // finishes pointing down in front. The alternate combo step sweeps back.
+      var sweepArc = (p.comboStep === 0) ? [-2.5, 0.7] : [0.7, -2.5];
       var a = sweepArc[0] + (sweepArc[1] - sweepArc[0]) * t;
       drawPitchfork(handX, handY, p.facing > 0 ? a : Math.PI - a, 11 * reachScale);
     } else {

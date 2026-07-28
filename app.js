@@ -241,6 +241,7 @@
     corn: '#f2c14e', cornHusk: '#4a8f3f',
     feather: '#1e1e1e', featherEdge: '#55555f',
     bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
+    roast: '#c9822f', roastLight: '#e8b45f', roastDark: '#a05f22', bone: '#f7edd8',
     scarecrowSack: '#d8b978', scarecrowBody: '#8a6a3a', scarecrowDark: '#5c4526', hat: '#4a3f38',
     combineBody: '#c1432f', combineDark: '#7a2e1f', combineHeader: '#e0b93a', wheel: '#2a1f18'
   };
@@ -477,7 +478,9 @@
       if (i < slabCount - 1) {
         var gapW = Math.round(GAP_MIN + rng() * (GAP_MAX - GAP_MIN));
         var isWater = rng() < 0.4;
-        gapBridges.push({ x: cursor, y: GROUND_Y, w: gapW, h: H - GROUND_Y, bridge: !isWater, noRender: isWater });
+        // Every gap gets a deployable bridge, water included - a plank you can
+        // see is much clearer than silently fording the stream.
+        gapBridges.push({ x: cursor, y: GROUND_Y, w: gapW, h: H - GROUND_Y, overWater: isWater });
         if (isWater) waters.push({ x: cursor, w: gapW });
         cursor += gapW;
       }
@@ -847,24 +850,39 @@
     runScore += Math.round(points * mult);
   }
 
-  function spawnDeathEffect(e) {
-    var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
-    var kind = e.type === 'crow' ? 'feather' : e.type === 'scarecrow' ? 'straw' : 'bacon';
-    var count = kind === 'feather' ? 6 : kind === 'straw' ? 14 : 5;
-    var life = kind === 'feather' ? 1.1 : kind === 'straw' ? 1.3 : 0.9;
+  var PARTICLE_KINDS = {
+    feather: { life: 1.1, gravity: 30, minSpeed: 10, spread: 20, lift: 10 },
+    bacon: { life: 0.9, gravity: 240, minSpeed: 20, spread: 40, lift: 20 },
+    straw: { life: 1.3, gravity: 150, minSpeed: 30, spread: 60, lift: 20 },
+    roast: { life: 1.5, gravity: 220, minSpeed: 12, spread: 26, lift: 34 }
+  };
+
+  function emitParticles(kind, count, cx, cy) {
+    var cfg = PARTICLE_KINDS[kind];
     for (var i = 0; i < count; i++) {
       var ang = Math.random() * Math.PI * 2;
-      var speed = kind === 'feather' ? 10 + Math.random() * 20
-        : kind === 'straw' ? 30 + Math.random() * 60
-          : 20 + Math.random() * 40;
+      var speed = cfg.minSpeed + Math.random() * cfg.spread;
       particles.push({
         x: cx, y: cy,
-        vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - (kind === 'feather' ? 10 : 20),
-        life: life, maxLife: life, kind: kind,
+        vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - cfg.lift,
+        life: cfg.life, maxLife: cfg.life, kind: kind,
         angle: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 6,
-        // Per-strip ripple offset so no two rashers curl identically.
+        // Per-piece phase offset so no two strips curl identically.
         wave: Math.random() * Math.PI * 2
       });
+    }
+  }
+
+  function spawnDeathEffect(e) {
+    var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+    if (e.type === 'crow') {
+      // Poof of black feathers, and the bird itself comes out oven-ready.
+      emitParticles('feather', 8, cx, cy);
+      emitParticles('roast', 1, cx, cy);
+    } else if (e.type === 'scarecrow') {
+      emitParticles('straw', 14, cx, cy);
+    } else {
+      emitParticles('bacon', 5, cx, cy);
     }
   }
 
@@ -1085,7 +1103,7 @@
   function updateParticles(dt) {
     for (var i = particles.length - 1; i >= 0; i--) {
       var p = particles[i];
-      var gravity = p.kind === 'feather' ? 30 : p.kind === 'straw' ? 150 : 240;
+      var gravity = (PARTICLE_KINDS[p.kind] || PARTICLE_KINDS.bacon).gravity;
       p.vy += gravity * dt;
       if (p.kind === 'feather') {
         p.vx *= 1 - 1.5 * dt;
@@ -1252,18 +1270,52 @@
   }
 
   function drawBridge(p) {
-    ctx.fillStyle = COLOR.crate;
-    ctx.fillRect(p.x, p.y, p.w, 5);
+    var deck = 6;
+
+    // Support posts first so the deck reads as sitting on top of them.
+    ctx.fillStyle = COLOR.crateDark;
+    [p.x + 2, p.x + p.w - 5].forEach(function (postX) {
+      ctx.fillRect(postX, p.y + deck, 3, H - (p.y + deck));
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(postX + 0.5, p.y + deck + 0.5, 2, H - (p.y + deck) - 1);
+    });
+
+    // Diagonal cross-brace between the posts.
     ctx.strokeStyle = COLOR.crateDark;
     ctx.lineWidth = 1;
-    for (var bx = p.x + 6; bx < p.x + p.w; bx += 6) {
+    ctx.beginPath();
+    ctx.moveTo(p.x + 3, p.y + deck + 2);
+    ctx.lineTo(p.x + p.w - 3, H - 3);
+    ctx.moveTo(p.x + p.w - 3, p.y + deck + 2);
+    ctx.lineTo(p.x + 3, H - 3);
+    ctx.stroke();
+
+    ctx.fillStyle = COLOR.crate;
+    ctx.fillRect(p.x, p.y, p.w, deck);
+    ctx.strokeStyle = COLOR.crateDark;
+    for (var bx = p.x + 5; bx < p.x + p.w; bx += 5) {
       ctx.beginPath();
       ctx.moveTo(bx + 0.5, p.y);
-      ctx.lineTo(bx + 0.5, p.y + 5);
+      ctx.lineTo(bx + 0.5, p.y + deck);
       ctx.stroke();
     }
     ctx.strokeStyle = COLOR.outline;
-    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, 4);
+    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, deck - 1);
+
+    // Rails, so a deployed bridge is unmistakable at a glance.
+    ctx.strokeStyle = COLOR.crateDark;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(p.x + 1, p.y - 4);
+    ctx.lineTo(p.x + p.w - 1, p.y - 4);
+    ctx.stroke();
+    [p.x + 1, p.x + p.w / 2, p.x + p.w - 1].forEach(function (rx) {
+      ctx.beginPath();
+      ctx.moveTo(rx, p.y - 4);
+      ctx.lineTo(rx, p.y);
+      ctx.stroke();
+    });
   }
 
   function drawPlatforms() {
@@ -1273,9 +1325,7 @@
       else drawLedge(p);
     }
     if (combineActive) {
-      for (var b = 0; b < gapBridges.length; b++) {
-        if (!gapBridges[b].noRender) drawBridge(gapBridges[b]);
-      }
+      for (var b = 0; b < gapBridges.length; b++) drawBridge(gapBridges[b]);
     }
   }
 
@@ -1680,6 +1730,40 @@
         ctx.fill();
         ctx.strokeStyle = COLOR.featherEdge;
         ctx.lineWidth = 0.5;
+        ctx.stroke();
+      } else if (p.kind === 'roast') {
+        // Oven-ready bird: plump body, two drumsticks with bone tips.
+        ctx.fillStyle = COLOR.roastDark;
+        [[2.4, 1.0, 0.6], [1.6, 1.5, 1.0]].forEach(function (d) {
+          ctx.beginPath();
+          ctx.ellipse(d[0], d[1], 1.5, 0.8, d[2], 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = COLOR.outline;
+          ctx.lineWidth = 0.35;
+          ctx.stroke();
+        });
+        ctx.fillStyle = COLOR.bone;
+        [[3.7, 1.6], [2.4, 2.5]].forEach(function (b) {
+          ctx.beginPath();
+          ctx.arc(b[0], b[1], 0.6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = COLOR.outline;
+          ctx.lineWidth = 0.3;
+          ctx.stroke();
+        });
+
+        ctx.fillStyle = COLOR.roast;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 3.4, 2.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.4;
+        ctx.stroke();
+
+        ctx.strokeStyle = COLOR.roastLight;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.ellipse(-0.4, -0.5, 2.1, 1.3, -0.15, Math.PI * 0.95, Math.PI * 1.95);
         ctx.stroke();
       } else if (p.kind === 'straw') {
         ctx.strokeStyle = COLOR.straw;

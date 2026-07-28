@@ -398,6 +398,11 @@
         noiseBurst(0.22, 0.13);
       },
       // Sad-trombone descent for a drowning.
+      skewer: function () {
+        beep(180, 0.05, 'square', 0.09);
+        sweep(1400, 500, 0.16, 'square', 0.08);
+        noiseBurst(0.1, 0.07);
+      },
       vultureCry: function () {
         sweep(900, 340, 0.28, 'sawtooth', 0.09);
         beep(420, 0.1, 'square', 0.05, 0.2);
@@ -1819,6 +1824,17 @@
       if (e.dead || player.hitThisSwing[e.id]) continue;
       if (aabbOverlap(boxX, boxY, boxW, boxH, e.x, e.y, e.w, e.h)) {
         player.hitThisSwing[e.id] = true;
+
+        // Catching a bird from directly underneath skewers it outright - the
+        // tines go straight up into it and there's nowhere for it to go.
+        var isBird = e.type === 'crow' || e.type === 'vulture';
+        if (isBird && (e.y + e.h) <= player.y + 2) {
+          e.hitFlash = 0.12;
+          audio.skewer();
+          killEnemy(e);
+          continue;
+        }
+
         e.hp -= 1;
         e.vx = player.facing * 60;
         e.vy = -40;

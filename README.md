@@ -14,6 +14,7 @@ Play: https://thataaronguy-sunstream.github.io/tah-game/
 - **The combine** is a toggleable form and a straight trade: it flattens ordinary animals on contact, but it can't jump and it can't cross gaps, so you dismount to platform and mount to fight. The scarecrow can still hurt it.
 - **The pitchfork doubles as a rake.** Swinging it hooks loose meat in range and flings it back to you, which is the only way to land anything floating in a stream.
 - **Kills drop food you have to collect.** Boars leave rashers of bacon, crows leave a roast chicken in a poof of black feathers. Score is paid for the kill, corn for picking the meat up — and dropped meat never falls out of the level; anything landing over a gap is placed on the nearest ground.
+- **Catch a bird from underneath** with the fork and it's skewered outright, whatever its health. The overhead swing reaches above your head, so a well-timed upward jab beats trading hits with a diving vulture.
 - **Stomping works.** Landing on an enemy from above deals a hit and bounces you off: two stomps for a boar, one for a crow. The scarecrow is too big to vault off.
 - **Animals sometimes drop a heart.** Roughly one kill in five leaves one. It restores a point of health, or cashes out as a chunk of score plus a corn if you're already at full health.
 - **Boars that fall in water** paddle at the surface until they drown, and still drop bacon.

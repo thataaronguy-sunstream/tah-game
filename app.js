@@ -196,6 +196,9 @@
   var MOVE_SPEED = 55;
   var COMBINE_MOVE_SPEED = 46;
   var JUMP_VELOCITY = -165;
+  // Releasing the jump key mid-ascent scrubs most of the remaining upward
+  // velocity, so a tap is a short hop and a hold gives the full arc.
+  var JUMP_CUT_MULT = 0.45;
   var DODGE_SPEED = 160;
   var DODGE_DURATION = 0.22;
   var DODGE_COOLDOWN_BASE = 0.5;
@@ -215,6 +218,8 @@
   // are capped well under that; the air jump is margin, not a requirement.
   var GAP_MIN = 22, GAP_MAX = 30;
 
+  // Kept under the original key so existing skill-tree progress survives the
+  // rename rather than silently resetting for anyone who has already played.
   var META_KEY = 'tah-game-deadfields-meta';
 
   var SCORE_CORN = 25, SCORE_CROW = 50, SCORE_BOAR = 75, SCORE_BOSS = 500;
@@ -234,7 +239,7 @@
     panelBg: 'rgba(30,26,20,0.16)', cardBg: '#f5f1e6', cardSel: '#ffe066',
     waterTop: '#5ec8e8', waterDeep: '#1f6f9e', waterSurface: '#d6f6ff',
     corn: '#f2c14e', cornHusk: '#4a8f3f',
-    feather: '#f2f0e6', bacon: '#e8836f', baconStripe: '#8a2e22', straw: '#e0c15a',
+    feather: '#1e1e1e', featherEdge: '#55555f', bacon: '#e8836f', baconStripe: '#8a2e22', straw: '#e0c15a',
     scarecrowSack: '#d8b978', scarecrowBody: '#8a6a3a', scarecrowDark: '#5c4526', hat: '#4a3f38',
     combineBody: '#c1432f', combineDark: '#7a2e1f', combineHeader: '#e0b93a', wheel: '#2a1f18'
   };
@@ -418,7 +423,7 @@
       vx: 0, vy: 0, facing: 1, onGround: false,
       hp: mods.maxHp, hitInvuln: 0,
       attackTimer: 0, attackCooldown: 0, comboStep: 0, comboResetTimer: 0, hitThisSwing: {},
-      rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0
+      rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true
     };
   }
 
@@ -577,14 +582,21 @@
   function nextLevel() {
     depth += 1;
     if (depth > meta.bestDepth) { meta.bestDepth = depth; saveMeta(); }
+
+    // Dismount explicitly rather than via setForm(): clearing combineActive
+    // first would make setForm's no-op guard skip the resize, stranding the
+    // farmer with the combine's short, wide hitbox.
     combineActive = false;
+    player.w = PLAYER_W;
+    player.h = PLAYER_H;
+
     generateLevel();
     player.x = 20;
     player.y = GROUND_Y - player.h;
     player.vx = 0;
     player.vy = 0;
     player.hitInvuln = PLAYER_HIT_INVULN;
-    setForm(false, true);
+    player.jumpCut = true;
     state = 'playing';
   }
 
@@ -772,14 +784,22 @@
       if (player.onGround) {
         player.vy = JUMP_VELOCITY;
         player.onGround = false;
+        player.jumpCut = false;
         audio.jump();
       } else if (player.airJumpsLeft > 0) {
         player.vy = JUMP_VELOCITY * 0.85;
         player.airJumpsLeft -= 1;
+        player.jumpCut = false;
         audio.doubleJump();
       }
     }
     jumpQueued = false;
+
+    // Cut the ascent once per jump, on the frame the key comes up.
+    if (!player.jumpCut && player.vy < 0 && !keys.KeyW) {
+      player.vy *= JUMP_CUT_MULT;
+      player.jumpCut = true;
+    }
 
     if (attackQueued && !combineActive && player.attackCooldown <= 0 && player.rolling <= 0) {
       player.attackTimer = ATTACK_DURATION;
@@ -946,10 +966,26 @@
         e.pauseTimer -= dt;
         e.vx = 0;
       } else {
-        var dx = player.x - e.x, dist = Math.abs(dx);
-        if (dist < def.detect && Math.abs((player.y + player.h) - (e.y + e.h)) < 24) {
+        var dx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        var adx = Math.abs(dx);
+        // Positive means the player's feet are above the boar's.
+        var vertGap = (e.y + e.h) - (player.y + player.h);
+        var sameLevel = Math.abs(vertGap) < 12;
+
+        if (adx < def.detect && sameLevel) {
+          // Deadzone: without it the boar flips facing every frame once it
+          // overshoots the player, which reads as vibrating in place.
+          if (adx < 3) {
+            e.vx = 0;
+          } else {
+            e.facing = dx > 0 ? 1 : -1;
+            e.vx = e.facing * def.chargeSpeed;
+          }
+        } else if (adx < def.detect * 1.4 && vertGap > 0) {
+          // Player is on a platform overhead and can't be reached, so pace
+          // along underneath at walking speed instead of stutter-charging.
           e.facing = dx > 0 ? 1 : -1;
-          e.vx = e.facing * def.chargeSpeed;
+          e.vx = adx < 6 ? 0 : e.facing * def.speed;
         } else {
           if (!e.patrolDir) e.patrolDir = 1;
           if (Math.abs(e.x - e.spawnX) > 25) e.patrolDir = e.x > e.spawnX ? -1 : 1;
@@ -1428,6 +1464,39 @@
     ctx.strokeStyle = COLOR.outline;
     ctx.stroke();
 
+    // Straw hat, rotated as one unit so the brim and crown stay attached, and
+    // cocked back the way the farmer is facing. Crown behind, brim in front so
+    // it reads as worn rather than floating.
+    ctx.save();
+    ctx.translate(cx, cy + 1);
+    ctx.rotate(-0.22 * p.facing);
+
+    ctx.fillStyle = COLOR.straw;
+    ctx.beginPath();
+    ctx.moveTo(-3, 0);
+    ctx.lineTo(-2.2, -4);
+    ctx.lineTo(2.2, -4);
+    ctx.lineTo(3, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.strokeStyle = COLOR.forkHandle;
+    ctx.beginPath();
+    ctx.moveTo(-2.7, -0.9);
+    ctx.lineTo(2.7, -0.9);
+    ctx.stroke();
+
+    ctx.fillStyle = COLOR.straw;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 6, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.stroke();
+    ctx.restore();
+
     var handX = cx + p.facing * 3, handY = cy + 7;
     if (p.attackTimer > 0) {
       var t = 1 - p.attackTimer / ATTACK_DURATION;
@@ -1600,11 +1669,13 @@
       ctx.translate(p.x, p.y);
       ctx.rotate(p.angle);
       if (p.kind === 'feather') {
+        // Black, to match the crow. Stroked with a lighter edge so the shape
+        // still reads when it drifts over dark water or soil.
         ctx.fillStyle = COLOR.feather;
         ctx.beginPath();
         ctx.ellipse(0, 0, 1.4, 3, 0, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = COLOR.outline;
+        ctx.strokeStyle = COLOR.featherEdge;
         ctx.lineWidth = 0.5;
         ctx.stroke();
       } else if (p.kind === 'straw') {
@@ -1840,9 +1911,9 @@
     } else if (state === 'title') {
       var blink = Math.floor(time * 2) % 2 === 0;
       drawOverlayText([
-        { text: 'DEAD FIELDS', size: 16, color: COLOR.title },
+        { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
-        { text: 'A/D MOVE  W JUMP  SPACE ATTACK  SHIFT ROLL', size: 6, color: COLOR.dim },
+        { text: 'A/D MOVE   W JUMP (HOLD = HIGHER)   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }

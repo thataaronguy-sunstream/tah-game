@@ -1,10 +1,10 @@
 # tah-game
 
-**Dead Fields** — an agriculture-themed roguelite in the Dead Cells mould. Descend five procedurally generated farm levels, harvesting corn and fighting crows, boars and a scarecrow boss that guards the barn. Corn buys run upgrades (pick 1 of 3) and banks into a permanent skill tree at the Farmstead, so each death makes the next run stronger. Rendered with vector primitives at 1280x720 over a 320x180 logical grid, procedural Web Audio music and SFX, no asset files, no build step.
+**Farmer Brown** — an agriculture-themed roguelite in the Dead Cells mould. Descend five procedurally generated farm levels, harvesting corn and fighting crows, boars and a scarecrow boss that guards the barn. Corn buys run upgrades (pick 1 of 3) and banks into a permanent skill tree at the Farmstead, so each death makes the next run stronger. Rendered with vector primitives at 1280x720 over a 320x180 logical grid, procedural Web Audio music and SFX, no asset files, no build step.
 
 Play: https://thataaronguy-sunstream.github.io/tah-game/
 
-**Controls:** `A`/`D` move, `W` jump, `Space` attack, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
+**Controls:** `A`/`D` move, `W` jump (tap for a short hop, hold for the full arc), `Space` attack, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
 
 ## The loop
 

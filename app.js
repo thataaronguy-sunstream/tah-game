@@ -168,6 +168,9 @@
       hitEnemy: function () { beep(120, 0.06, 'square', 0.08); },
       hitPlayer: function () { sweep(200, 80, 0.15, 'sawtooth', 0.11); },
       corn: function () { beep(660, 0.07, 'square', 0.07); beep(880, 0.08, 'square', 0.06, 0.06); },
+      heal: function () {
+        [523, 698, 880].forEach(function (f, i) { beep(f, 0.16, 'triangle', 0.09, i * 0.07); });
+      },
       roll: function () { noiseBurst(0.1, 0.05); },
       transform: function () { sweep(120, 300, 0.25, 'sawtooth', 0.08); },
       menuMove: function () { beep(440, 0.04, 'square', 0.05); },
@@ -862,8 +865,10 @@
 
   var DROP_DEFS = {
     bacon: { w: 6, h: 3, corn: 1, score: 15 },
-    roast: { w: 7, h: 5, corn: 2, score: 40 }
+    roast: { w: 7, h: 5, corn: 2, score: 40 },
+    health: { w: 5, h: 5, corn: 0, score: 10, heal: 1 }
   };
+  var HEALTH_DROP_CHANCE = 0.22;
 
   function spawnDrop(kind, cx, cy) {
     var def = DROP_DEFS[kind];
@@ -873,8 +878,9 @@
       vx: (Math.random() - 0.5) * 55,
       vy: -30 - Math.random() * 40,
       landed: false,
-      angle: Math.random() * Math.PI * 2,
-      spin: (Math.random() - 0.5) * 7,
+      // Hearts stay upright so they read instantly as a pickup; meat tumbles.
+      angle: kind === 'health' ? 0 : Math.random() * Math.PI * 2,
+      spin: kind === 'health' ? 0 : (Math.random() - 0.5) * 7,
       wave: Math.random() * Math.PI * 2,
       bob: Math.random() * Math.PI * 2
     });
@@ -936,9 +942,17 @@
 
       if (aabbOverlap(player.x, player.y, player.w, player.h, d.x, d.y, d.w, d.h)) {
         var def = DROP_DEFS[d.kind];
+        // Leave hearts on the ground at full health rather than wasting them.
+        if (def.heal && player.hp >= mods.maxHp) continue;
+
+        if (def.heal) {
+          player.hp = Math.min(mods.maxHp, player.hp + def.heal);
+          audio.heal();
+        } else {
+          audio.corn();
+        }
         runCorn += def.corn;
         addScore(def.score);
-        audio.corn();
         d.taken = true;
       }
     }
@@ -971,6 +985,11 @@
       emitParticles('straw', 14, cx, cy);
     } else {
       for (var b = 0; b < 3; b++) spawnDrop('bacon', cx, cy);
+    }
+
+    // Animals occasionally leave something restorative behind.
+    if (e.type !== 'scarecrow' && Math.random() < HEALTH_DROP_CHANCE) {
+      spawnDrop('health', cx, cy);
     }
   }
 
@@ -1230,11 +1249,17 @@
     if (toastTimer > 0) toastTimer -= dt;
 
     if (state !== 'playing') {
-      for (var i = 0; i < enemies.length; i++) {
-        var e = enemies[i];
-        if (e.type === 'crow' && !e.dead) {
-          e.phase += dt * 3;
-          e.y = e.spawnY + Math.sin(e.phase) * 6;
+      // Ambient drift belongs to the title screen only. Running it during the
+      // upgrade draft and the end panels rewrote a chasing crow's y back to
+      // spawnY, so it appeared to teleport away from the player. Everything
+      // else freezes while a menu is up.
+      if (state === 'title') {
+        for (var i = 0; i < enemies.length; i++) {
+          var e = enemies[i];
+          if (e.type === 'crow' && !e.dead) {
+            e.phase += dt * 3;
+            e.y = e.spawnY + Math.sin(e.phase) * 6;
+          }
         }
       }
       return;
@@ -1962,6 +1987,27 @@
     }
   }
 
+  function drawHeartShape() {
+    var pulse = 1 + Math.sin(time * 5) * 0.07;
+    ctx.scale(pulse, pulse);
+    ctx.beginPath();
+    ctx.moveTo(0, 2.2);
+    ctx.bezierCurveTo(-2.7, 0.3, -2.5, -2.3, -0.95, -2.3);
+    ctx.bezierCurveTo(-0.3, -2.3, 0, -1.7, 0, -1.25);
+    ctx.bezierCurveTo(0, -1.7, 0.3, -2.3, 0.95, -2.3);
+    ctx.bezierCurveTo(2.5, -2.3, 2.7, 0.3, 0, 2.2);
+    ctx.closePath();
+    ctx.fillStyle = COLOR.bad;
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.42;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.ellipse(-1.05, -0.95, 0.45, 0.72, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function drawDrops() {
     for (var i = 0; i < drops.length; i++) {
       var d = drops[i];
@@ -1970,6 +2016,7 @@
       ctx.translate(d.x + d.w / 2, d.y + d.h / 2 + bobY);
       ctx.rotate(d.angle);
       if (d.kind === 'roast') drawRoastShape();
+      else if (d.kind === 'health') drawHeartShape();
       else drawBaconShape(d.wave);
       ctx.restore();
     }

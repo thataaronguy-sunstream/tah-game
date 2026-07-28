@@ -118,7 +118,8 @@
       playerDeath: function () { sweep(300, 60, 0.6, 'sawtooth', 0.11); },
       levelClear: function () {
         [523, 659, 784, 1047].forEach(function (f, i) { beep(f, 0.2, 'square', 0.09, i * 0.12); });
-      }
+      },
+      bossSwing: function () { sweep(150, 60, 0.2, 'sawtooth', 0.1); }
     };
   })();
 
@@ -210,6 +211,11 @@
   var BOSS_CROW_CONCURRENT_CAP = 5;
   var BOSS_AGGRO_RANGE = 100;
   var BOSS_SPAWN_INTERVAL = 1.8;
+  var BOSS_MELEE_RANGE = 30;
+  var BOSS_ATTACK_WINDUP = 0.4;
+  var BOSS_ATTACK_ACTIVE = 0.15;
+  var BOSS_ATTACK_COOLDOWN = 1.1;
+  var BOSS_ATTACK_REACH = 14;
 
   var keys = {};
   var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'Space', 'ShiftLeft', 'ShiftRight'];
@@ -301,7 +307,8 @@
       vx: 0, vy: 0, facing: -1, hp: def.hp, hitFlash: 0,
       spawnX: x, spawnY: y, patrolDir: 0, pauseTimer: 0,
       phase: 0, onGround: false, fellOut: false, dead: false,
-      crowSpawnCount: 0, spawnTimer: BOSS_SPAWN_INTERVAL
+      crowSpawnCount: 0, spawnTimer: BOSS_SPAWN_INTERVAL,
+      atkState: 'idle', atkTimer: 0, atkHit: false
     };
   }
 
@@ -673,6 +680,8 @@
       }
       e.x = Math.max(0, Math.min(LEVEL_WIDTH - e.w, e.x));
     } else if (e.type === 'scarecrow') {
+      e.facing = player.x > e.x ? 1 : -1;
+
       if (Math.abs(player.x - e.x) < BOSS_AGGRO_RANGE) {
         e.spawnTimer -= dt;
         if (e.spawnTimer <= 0 && e.crowSpawnCount < BOSS_CROW_CAP) {
@@ -688,6 +697,42 @@
           }
           e.spawnTimer = BOSS_SPAWN_INTERVAL;
         }
+      }
+
+      var meleeDist = Math.abs(player.x - (e.x + e.w / 2));
+      if (e.atkState === 'idle') {
+        if (meleeDist < BOSS_MELEE_RANGE) {
+          e.atkState = 'windup';
+          e.atkTimer = BOSS_ATTACK_WINDUP;
+        }
+      } else if (e.atkState === 'windup') {
+        e.atkTimer -= dt;
+        if (e.atkTimer <= 0) {
+          e.atkState = 'strike';
+          e.atkTimer = BOSS_ATTACK_ACTIVE;
+          e.atkHit = false;
+          audio.bossSwing();
+        }
+      } else if (e.atkState === 'strike') {
+        e.atkTimer -= dt;
+        if (!e.atkHit) {
+          var boxX = e.facing > 0 ? e.x : e.x - BOSS_ATTACK_REACH;
+          var boxW = e.w + BOSS_ATTACK_REACH;
+          if (aabbOverlap(boxX, e.y, boxW, e.h, player.x, player.y, player.w, player.h) &&
+            player.hitInvuln <= 0 && player.rolling <= 0) {
+            player.hp -= 1;
+            player.hitInvuln = PLAYER_HIT_INVULN;
+            audio.hitPlayer();
+            e.atkHit = true;
+          }
+        }
+        if (e.atkTimer <= 0) {
+          e.atkState = 'cooldown';
+          e.atkTimer = BOSS_ATTACK_COOLDOWN;
+        }
+      } else if (e.atkState === 'cooldown') {
+        e.atkTimer -= dt;
+        if (e.atkTimer <= 0) e.atkState = 'idle';
       }
     }
   }
@@ -1140,10 +1185,32 @@
       var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
       var scx = sx + sw / 2;
 
+      var armAngle = 0;
+      if (e.atkState === 'windup') {
+        armAngle = -0.7 * (1 - e.atkTimer / BOSS_ATTACK_WINDUP);
+      } else if (e.atkState === 'strike') {
+        armAngle = -0.7 + 1.3 * (1 - e.atkTimer / BOSS_ATTACK_ACTIVE);
+      }
+
+      if (e.atkState === 'strike') {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.translate(scx, sy + 10.5);
+        ctx.rotate(armAngle - 0.35 * e.facing);
+        ctx.fillStyle = COLOR.scarecrowDark;
+        ctx.fillRect(-sw / 2 - 4, -1.5, sw + 8, 3);
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.translate(scx, sy + 10.5);
+      ctx.rotate(armAngle * e.facing);
       ctx.fillStyle = flashing ? COLOR.flash : COLOR.scarecrowDark;
-      ctx.fillRect(sx - 4, sy + 9, sw + 8, 3);
+      ctx.fillRect(-sw / 2 - 4, -1.5, sw + 8, 3);
       ctx.strokeStyle = COLOR.outline;
-      ctx.strokeRect(sx - 3.5, sy + 9.5, sw + 7, 2);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-sw / 2 - 3.5, -1, sw + 7, 2);
+      ctx.restore();
 
       ctx.fillStyle = flashing ? COLOR.flash : COLOR.scarecrowBody;
       ctx.fillRect(sx + 2, sy + 8, sw - 4, sh - 8);

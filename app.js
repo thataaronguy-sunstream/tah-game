@@ -2742,11 +2742,16 @@
       ctx.fillStyle = grad;
       ctx.fillRect(wtr.x, y, wtr.w, H - y);
 
+      // Ripple entirely below the bank. Centring the sine on GROUND_Y put the
+      // crests above the adjacent ground, so the stream looked like it was
+      // standing proud of its own banks. Offset by the amplitude plus half the
+      // stroke width so even the topmost pixel stays under the surface line.
+      var amp = 1.1;
       ctx.strokeStyle = COLOR.waterSurface;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (var x = wtr.x; x <= wtr.x + wtr.w; x += 2) {
-        var wy = y + Math.sin((x + time * 40) * 0.4) * 1.2;
+        var wy = y + amp + 0.6 + Math.sin((x + time * 40) * 0.4) * amp;
         if (x === wtr.x) ctx.moveTo(x, wy);
         else ctx.lineTo(x, wy);
       }

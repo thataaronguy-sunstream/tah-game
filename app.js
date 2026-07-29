@@ -4199,20 +4199,21 @@
       { n: runRes.bacon, draw: function () { ctx.scale(0.8, 0.8); drawBaconShape(0.9); } },
       { n: runRes.chicken, draw: function () { ctx.scale(0.72, 0.72); drawRoastShape(); } }
     ];
-    // Grouped with the score, directly beneath it on the right. Centring it
-    // ran the icons through the DEPTH readout, and the boss bar owns the
-    // middle of this row, so the right edge is the clear spot.
-    var x0 = W - 70, y0 = 21;
-    ctx.textAlign = 'left';
+    // A vertical column under the score, right-aligned to the same edge so the
+    // counts line up with the points above them. The middle of these rows
+    // belongs to the boss bar and the toasts, so the right edge is the only
+    // clear lane.
+    var iconX = W - 14, countX = W - 4, y0 = 22, rowH = 11;
+    ctx.textAlign = 'right';
     ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
     for (var i = 0; i < items.length; i++) {
-      var ix = x0 + i * 26;
+      var iy = y0 + i * rowH;
       ctx.save();
-      ctx.translate(ix, y0 - 2);
+      ctx.translate(iconX, iy);
       items[i].draw();
       ctx.restore();
       ctx.fillStyle = COLOR.hud;
-      ctx.fillText(String(items[i].n), ix + 6, y0 + 1);
+      ctx.fillText(String(items[i].n), countX, iy + 2.5);
     }
   }
 

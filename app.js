@@ -3291,9 +3291,9 @@
     }
   }
 
-  function drawHeartShape() {
-    var pulse = 1 + Math.sin(time * 5) * 0.07;
-    ctx.scale(pulse, pulse);
+  // Traces a heart centred on the origin, spanning roughly 5.4 x 4.5. Shared
+  // by the pickup and the HUD pips so the two can't drift out of sync.
+  function heartPath() {
     ctx.beginPath();
     ctx.moveTo(0, 2.2);
     ctx.bezierCurveTo(-2.7, 0.3, -2.5, -2.3, -0.95, -2.3);
@@ -3301,6 +3301,12 @@
     ctx.bezierCurveTo(0, -1.7, 0.3, -2.3, 0.95, -2.3);
     ctx.bezierCurveTo(2.5, -2.3, 2.7, 0.3, 0, 2.2);
     ctx.closePath();
+  }
+
+  function drawHeartShape() {
+    var pulse = 1 + Math.sin(time * 5) * 0.07;
+    ctx.scale(pulse, pulse);
+    heartPath();
     ctx.fillStyle = COLOR.bad;
     ctx.fill();
     ctx.strokeStyle = COLOR.outline;
@@ -3350,13 +3356,26 @@
   }
 
   function drawHud() {
-    var pipW = 7, gap = 2, startX = 4, y = 4;
+    // Hearts rather than blocks, to match the health pickups.
+    var pipW = 8, startX = 8, y = 7;
     for (var i = 0; i < mods.maxHp; i++) {
-      ctx.fillStyle = i < player.hp ? COLOR.bad : COLOR.hpEmpty;
-      ctx.fillRect(startX + i * (pipW + gap), y, pipW, 6);
+      var full = i < player.hp;
+      ctx.save();
+      ctx.translate(startX + i * pipW, y);
+      ctx.scale(1.35, 1.35);
+      heartPath();
+      ctx.fillStyle = full ? COLOR.bad : COLOR.hpEmpty;
+      ctx.fill();
       ctx.strokeStyle = COLOR.outline;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(startX + i * (pipW + gap) + 0.5, y + 0.5, pipW - 1, 5);
+      ctx.lineWidth = 0.55;
+      ctx.stroke();
+      if (full) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(-1.05, -0.95, 0.4, 0.62, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
     ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';

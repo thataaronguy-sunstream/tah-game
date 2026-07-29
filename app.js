@@ -450,6 +450,7 @@
   var PLAYER_W = 8, PLAYER_H = 14;
   var COMBINE_W = 18, COMBINE_H = 11;
   var PLAYER_HIT_INVULN = 0.8;
+  var STOMP_GRACE = 0.3;
 
   var GROUND_Y = 164;
   // A boss every five levels rather than a single hard stop. Beating one lets
@@ -744,6 +745,7 @@
       hp: mods.maxHp, hitInvuln: 0,
       attackTimer: 0, attackCooldown: 0, comboStep: 0, comboResetTimer: 0, hitThisSwing: {},
       rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true,
+      stompGrace: 0,
       dropThrough: 0, swimming: false, drownTimer: PLAYER_DROWN_TIME
     };
   }
@@ -1055,6 +1057,7 @@
     player.vy = 0;
     player.hitInvuln = PLAYER_HIT_INVULN;
     player.jumpCut = true;
+    player.stompGrace = 0;
     player.slamArmed = false;
     slamFx = 0;
     state = 'playing';
@@ -1781,6 +1784,7 @@
       if (player.comboResetTimer <= 0) player.comboStep = 0;
     }
     if (player.rollCooldown > 0) player.rollCooldown -= dt;
+    if (player.stompGrace > 0) player.stompGrace -= dt;
 
     if (formQueued) {
       if (mods.hasCombine) setForm(!combineActive);
@@ -2246,17 +2250,21 @@
       // health that's two stomps for a boar and one for a crow. The boss is too
       // big to vault off.
       if (!combineActive && player.vy > 0 && !isBoss(e) && e.type !== 'vulture' &&
-        (player.y + player.h) < e.y + e.h * 0.6) {
+        (player.y + player.h) < e.y + e.h * 0.85) {
         e.hp -= 1;
         e.hitFlash = 0.12;
         player.vy = JUMP_VELOCITY * 0.62;
         player.jumpCut = true;
+        // The bounce leaves you still overlapping but now moving upward, which
+        // failed the vy>0 test and charged you a heart for a clean stomp. A
+        // brief grace covers the frames it takes to clear the body.
+        player.stompGrace = STOMP_GRACE;
         audio.hitEnemy();
         if (e.hp <= 0) killEnemy(e);
         continue;
       }
 
-      if (player.hitInvuln > 0 || player.rolling > 0) continue;
+      if (player.hitInvuln > 0 || player.rolling > 0 || player.stompGrace > 0) continue;
       player.hp -= 1;
       player.hitInvuln = PLAYER_HIT_INVULN;
       if (!combineActive) {

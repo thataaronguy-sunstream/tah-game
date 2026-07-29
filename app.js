@@ -1494,7 +1494,9 @@
 
     if (state === 'title') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
-      else if (e.code === 'KeyF') enterFarm();   // debug: skip straight to the farm
+      // Undocumented on purpose: F still jumps straight to the homestead for
+      // testing, it's just no longer advertised on the title screen. Keep it.
+      else if (e.code === 'KeyF') enterFarm();
       else startRun();
       return;
     }
@@ -3741,8 +3743,7 @@
         { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
-        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 },
-        { text: 'F: HOMESTEAD (DEBUG)', size: 5, color: COLOR.dim }
+        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }
       ]);
     } else if (state === 'hub') {
       drawHub();

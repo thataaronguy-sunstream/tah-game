@@ -13,7 +13,8 @@ opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 ## The loop
 
 - **Runs** are five levels deep. Reaching the silo clears a level; the final level swaps it for a barn you can't enter while the scarecrow lives.
-- **Corn** does double duty: every 5 picked up offers a choice of 3 run upgrades, and the total banks on death for the skill tree.
+- **Three resources, not one.** Corn, bacon and chicken are tracked separately, one per pickup, shown as icons with counts. They bank at different rates (corn 1, bacon 2, chicken 3) because meat costs you a fight.
+- **Points unlock upgrade cards,** and points come from kills as well as pickups. The threshold accelerates, so cards get rarer as a run goes on rather than piling up.
 - **Death ends the run,** and it costs you. Upgrades are lost and the crows take 90% of the corn you were carrying — only a tenth makes it home. Reach the barn alive and you keep the lot, which is the whole reason to push for the exit rather than farm the field.
 - **The combine** is a toggleable form and a straight trade: it flattens ordinary animals on contact, but it can't jump and it can't cross gaps, so you dismount to platform and mount to fight. The scarecrow can still hurt it.
 - **The pitchfork doubles as a rake.** Swinging it hooks loose meat in range and flings it back to you, which is the only way to land anything floating in a stream.

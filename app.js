@@ -467,7 +467,18 @@
     return BOSS_ORDER[Math.min(idx, BOSS_ORDER.length - 1)];
   }
   function bossTierFor(d) { return Math.floor(d / BOSS_INTERVAL); }
-  var CORN_PER_UPGRADE = 5;
+  // Cards used to unlock every 5 cobs, and cobs are everywhere - you drowned
+  // in choices. They're gated on points now, escalating so later cards are
+  // rarer than the first.
+  // A flat step doesn't work: levels yield ~1200 points each by depth 5, so a
+  // fixed gap actually hands out MORE cards than the old 5-cob rule. The gap
+  // has to accelerate. These land on roughly one card per level.
+  var UPGRADE_SCORE_FIRST = 750;
+  var UPGRADE_STEP_BASE = 550;
+  var UPGRADE_STEP_GROWTH = 200;
+  // Value each resource banks for at the Farmstead. Meat is worth more than
+  // a cob because you had to fight something for it.
+  var RES_BANK_VALUE = { corn: 1, bacon: 2, chicken: 3 };
 
   // Single-jump horizontal reach is ~43px (0.79s airtime x 55px/s), so gaps
   // are capped well under that; the air jump is margin, not a requirement.
@@ -696,7 +707,9 @@
   var depth = 1;
   var runScore = 0;
   var runCorn = 0;
-  var cornSinceUpgrade = 0;
+  var runRes = { corn: 0, bacon: 0, chicken: 0 };
+  var nextUpgradeScore = UPGRADE_SCORE_FIRST;
+  var upgradeStep = UPGRADE_STEP_BASE;
   var runUpgrades = {};
   var mods = null;
 
@@ -718,7 +731,7 @@
   var treeIndex = 0;
   var barnBlockedMsgTimer = 0;
   var slamFx = 0;
-  var lastBanked = 0, lastLost = 0;
+  var lastBanked = 0, lastLost = 0, lastHaul = 0;
   var drownSeq = null;
   var toastText = '';
   var toastTimer = 0;
@@ -1013,7 +1026,9 @@
     depth = 1;
     runScore = 0;
     runCorn = 0;
-    cornSinceUpgrade = 0;
+    runRes = { corn: 0, bacon: 0, chicken: 0 };
+    nextUpgradeScore = UPGRADE_SCORE_FIRST;
+    upgradeStep = UPGRADE_STEP_BASE;
     runUpgrades = {};
     mods = freshMods();
     combineActive = false;
@@ -1066,8 +1081,12 @@
   function endRun(victorious) {
     // Escape with the harvest and you keep all of it. Die out there and the
     // crows get most of it - only a tenth makes it home.
-    lastBanked = victorious ? runCorn : Math.floor(runCorn * DEATH_CORN_KEPT);
-    lastLost = runCorn - lastBanked;
+    var haul = runRes.corn * RES_BANK_VALUE.corn +
+      runRes.bacon * RES_BANK_VALUE.bacon +
+      runRes.chicken * RES_BANK_VALUE.chicken;
+    lastHaul = haul;
+    lastBanked = victorious ? haul : Math.floor(haul * DEATH_CORN_KEPT);
+    lastLost = haul - lastBanked;
     meta.bankedCorn += lastBanked;
     if (depth > meta.bestDepth) meta.bestDepth = depth;
     if (runScore > meta.bestScore) meta.bestScore = runScore;
@@ -2038,6 +2057,9 @@
             audio.heal();
           }
         } else {
+          // Bacon and chicken are their own resources, one per pickup.
+          if (d.kind === 'bacon') runRes.bacon += 1;
+          else if (d.kind === 'roast') runRes.chicken += 1;
           runCorn += def.corn;
           addScore(def.score);
           audio.corn();
@@ -2188,15 +2210,20 @@
   function collectCorn(c) {
     c.collected = true;
     var isApple = c.kind === 'apple';
+    runRes.corn += 1;
     runCorn += isApple ? APPLE_CORN : mods.cornValue;
     addScore(isApple ? APPLE_SCORE : SCORE_CORN);
-    cornSinceUpgrade += 1;
     audio.corn();
-    if (cornSinceUpgrade >= CORN_PER_UPGRADE) {
-      cornSinceUpgrade = 0;
-      if (offerUpgrade()) return true;
-    }
-    return false;
+    return maybeOfferUpgrade();
+  }
+
+  // One place decides when a card is earned, so kills and pickups both count
+  // toward it and the threshold can't drift between callers.
+  function maybeOfferUpgrade() {
+    if (runScore < nextUpgradeScore) return false;
+    nextUpgradeScore += upgradeStep;
+    upgradeStep += UPGRADE_STEP_GROWTH;
+    return offerUpgrade();
   }
 
   function checkCorn() {
@@ -2685,6 +2712,8 @@
 
     for (var j = 0; j < enemies.length; j++) updateEnemy(enemies[j], dt);
     enemies = enemies.filter(function (en) { return !en.dead; });
+    // Kills feed the same score gate the pickups do.
+    if (maybeOfferUpgrade()) return;
     checkEnemyContact();
     updateDrops(dt);
 
@@ -4134,6 +4163,35 @@
     ctx.strokeRect(x + 0.5, y + 0.5, barW - 1, barH - 1);
   }
 
+
+  // A cob, a rasher and a roast with their tallies. Uses the same sprites as
+  // the pickups so the icon and the thing you picked up always match.
+  function resSummary() {
+    return runRes.corn + ' CORN  ' + runRes.bacon + ' BACON  ' + runRes.chicken + ' CHICKEN';
+  }
+
+  function drawResourceTray() {
+    var items = [
+      { n: runRes.corn, draw: function () { ctx.scale(0.85, 0.85); drawCornEar(); } },
+      { n: runRes.bacon, draw: function () { ctx.scale(0.8, 0.8); drawBaconShape(0.9); } },
+      { n: runRes.chicken, draw: function () { ctx.scale(0.72, 0.72); drawRoastShape(); } }
+    ];
+    // Second row, hard left. Centring it ran the icons straight through the
+    // DEPTH readout, and the boss bar owns the middle of this row.
+    var x0 = 9, y0 = 21;
+    ctx.textAlign = 'left';
+    ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
+    for (var i = 0; i < items.length; i++) {
+      var ix = x0 + i * 26;
+      ctx.save();
+      ctx.translate(ix, y0 - 2);
+      items[i].draw();
+      ctx.restore();
+      ctx.fillStyle = COLOR.hud;
+      ctx.fillText(String(items[i].n), ix + 6, y0 + 1);
+    }
+  }
+
   function drawHud() {
     // Hearts rather than blocks, to match the health pickups.
     var pipW = 8, startX = 8, y = 7;
@@ -4162,7 +4220,10 @@
     ctx.textAlign = 'center';
     ctx.fillText('DEPTH ' + depth, W / 2, 10);
     ctx.textAlign = 'right';
-    ctx.fillText('CORN ' + runCorn + '   ' + pad(runScore), W - 4, 10);
+    ctx.fillText(pad(runScore), W - 4, 10);
+
+    // Three resources as icons with counts, rather than one merged number.
+    drawResourceTray();
 
     ctx.textAlign = 'left';
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
@@ -4400,7 +4461,7 @@
       drawOverlayText([
         { text: 'FIELD CLEARED', size: 14, color: COLOR.good },
         { text: '', size: 4 },
-        { text: 'DEPTH ' + depth + ' DONE   CORN ' + runCorn, size: 7 },
+        { text: 'DEPTH ' + depth + ' DONE   ' + resSummary(), size: 7 },
         { text: '', size: 4 },
         { text: 'ANY KEY: DESCEND', size: 7 }
       ]);
@@ -4409,7 +4470,7 @@
       drawOverlayText([
         { text: BOSS_NAMES[bossTypeFor(depth)] + ' DOWN', size: 13, color: COLOR.good },
         { text: '', size: 4 },
-        { text: 'DEPTH ' + depth + '   CARRYING ' + runCorn + ' CORN', size: 7 },
+        { text: 'DEPTH ' + depth + '   CARRYING ' + resSummary(), size: 7 },
         { text: 'NEXT DOWN THERE: ' + BOSS_NAMES[nextBoss], size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'ANY KEY: PUSH DEEPER', size: 7 },
@@ -4420,7 +4481,8 @@
         { text: 'YOU DIED', size: 16, color: COLOR.bad },
         { text: '', size: 4 },
         { text: 'DEPTH ' + depth + '   SCORE ' + pad(runScore), size: 7 },
-        { text: 'CARRIED ' + runCorn + '   LOST ' + lastLost + '   KEPT ' + lastBanked, size: 6, color: COLOR.bad },
+        { text: resSummary(), size: 6, color: COLOR.dim },
+        { text: 'HAUL ' + lastHaul + '   LOST ' + lastLost + '   KEPT ' + lastBanked, size: 6, color: COLOR.bad },
         { text: 'BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'ANY KEY: NEW RUN     H: FARMSTEAD', size: 7 }
@@ -4429,7 +4491,7 @@
       drawOverlayText([
         { text: 'HARVEST COMPLETE', size: 13, color: COLOR.good },
         { text: '', size: 4 },
-        { text: 'SCORE ' + pad(runScore) + '   CORN ' + runCorn, size: 7 },
+        { text: 'SCORE ' + pad(runScore) + '   ' + resSummary(), size: 7 },
         { text: 'KEPT ALL ' + lastBanked + '   TOTAL BANKED ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'F: HOMESTEAD   H: FARMSTEAD   ANY KEY: NEW RUN', size: 6 }

@@ -455,7 +455,11 @@
   // A boss every five levels rather than a single hard stop. Beating one lets
   // you bank out or push deeper with your upgrades intact.
   var BOSS_INTERVAL = 5;
-  var BOSS_ORDER = ['scarecrow', 'bull'];
+  var BOSS_ORDER = ['scarecrow', 'bull', 'rustbucket', 'queen', 'oak'];
+  var BOSS_NAMES = {
+    scarecrow: 'SCARECROW', bull: 'THE BULL', rustbucket: 'RUSTBUCKET',
+    queen: 'SWARM QUEEN', oak: 'THE OLD OAK'
+  };
   function isBossDepth(d) { return d % BOSS_INTERVAL === 0; }
   function bossTypeFor(d) {
     var idx = Math.floor(d / BOSS_INTERVAL) - 1;
@@ -487,6 +491,9 @@
     crate: '#c68a45', crateDark: '#8a5a2c',
     player: '#3d6fd1', skin: '#f2c294', fork: '#d8dbe0', forkHandle: '#6a4526',
     crow: '#1e1e1e', crowBeak: '#4a4a52', crowSheen: '#3d4655', crowEye: '#e8c15a',
+    rust: '#a8603a', rustDark: '#6f3a20',
+    queen: '#4a5a2a', queenDark: '#2f3a18', queenLit: '#9fc44a', wing: '#dfeaf5',
+    larva: '#e8dcc0', larvaHead: '#c9b48a',
     bull: '#3a2f2a', bullDark: '#241c18', bullMuzzle: '#c99a86', bullRing: '#e8c15a',
     vulture: '#4a3f38', vultureDark: '#2f2823', vultureRuff: '#d8cdb8', vultureHead: '#c98d7a',
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
@@ -512,10 +519,27 @@
   var ENEMY_DEFS = {
     boar: { w: 14, h: 10, hp: 2, speed: 26, chargeSpeed: 72, detect: 55 },
     crow: { w: 10, h: 8, hp: 1, speed: 20, detect: 50 },
+    // Queen spawn: a helpless grub that squirms along the ground, then hatches
+    // into a fly with crow stats. Kill it early and it never gets airborne.
+    larva: { w: 8, h: 5, hp: 1, speed: 9, detect: 0 },
+    fly: { w: 10, h: 8, hp: 1, speed: 20, detect: 50 },
     // 3 pitchfork hits, or a slam plus one. Tanky enough to be a fight,
     // short enough that you're not chasing it round the tree all day.
     vulture: { w: 17, h: 13, hp: 3, speed: 26, diveSpeed: 112, detect: 130 },
-    scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 }
+    scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 },
+    // The bull paces, paws the ground, then charges the full arena. If it hits
+    // a wall it recoils, shakes it off and lines up another run - that reset
+    // is the whole fight.
+    bull: { w: 26, h: 16, hp: 16, speed: 22, chargeSpeed: 168, detect: 999 },
+    // Driverless combine. Grinds along the ground and can't climb, so the
+    // fight is vertical: you work from bales and branches while it patrols.
+    rustbucket: { w: 30, h: 18, hp: 20, speed: 30, chargeSpeed: 30, detect: 999 },
+    // Hovers out of melee reach dripping crows; only hittable while she
+    // descends to lay. Rewards the overhead sweep and the skewer.
+    queen: { w: 20, h: 16, hp: 14, speed: 26, chargeSpeed: 26, detect: 999 },
+    // Stationary. Sweeps a low limb along the ground, so the only safe route
+    // is up its own branches to the crown.
+    oak: { w: 34, h: 64, hp: 24, speed: 0, chargeSpeed: 0, detect: 999 }
   };
 
   var PLAYER_DROWN_TIME = 1.8;
@@ -523,6 +547,11 @@
   var VULTURE_TELEGRAPH = 0.45;
   var VULTURE_DIVE_TIME = 1.1;
   var VULTURE_COOLDOWN = 1.2;
+  var CHAFF_INTERVAL = 1.9;
+  var QUEEN_HOVER_Y = 52;
+  var QUEEN_LAY_INTERVAL = 3.2;
+  var LARVA_MATURE_TIME = 3.5;
+  var OAK_SWEEP_INTERVAL = 2.6;
   var BULL_PAW_TIME = 0.7;
   var BULL_RECOVER_TIME = 0.85;
   var BULL_CHARGE_MAX = 2.4;
@@ -749,7 +778,7 @@
     return e;
   }
 
-  function isBoss(e) { return e.type === 'scarecrow' || e.type === 'bull'; }
+  function isBoss(e) { return BOSS_ORDER.indexOf(e.type) !== -1; }
 
   // Generates a left-to-right chain of ground slabs separated by jumpable
   // gaps, so every level is traversable by construction rather than by
@@ -925,7 +954,22 @@
 
     if (hasBoss) {
       var bt = bossTypeFor(depth);
-      enemies.push(makeBoss(exitX - 30, GROUND_Y - ENEMY_DEFS[bt].h, bt, bossTierFor(depth)));
+      var by0 = bt === 'queen' ? QUEEN_HOVER_Y : GROUND_Y - ENEMY_DEFS[bt].h;
+      var bx0 = exitX - 30;
+      enemies.push(makeBoss(bx0, by0, bt, bossTierFor(depth)));
+
+      // The oak's crown is only damageable from above, so give the arena a
+      // climbable staircase of its own limbs. Without this the fight is
+      // unwinnable rather than hard.
+      if (bt === 'oak') {
+        for (var ol = 0; ol < 3; ol++) {
+          platforms.push({
+            x: bx0 - 52 + ol * 20,
+            y: GROUND_Y - (BRANCH_BASE + ol * BRANCH_STEP),
+            w: 18, h: 5, branch: true
+          });
+        }
+      }
     }
   }
 
@@ -1566,6 +1610,13 @@
       else startRun();
       return;
     }
+    if (state === 'bossclear') {
+      // Retire and the whole haul banks. Push on and you keep your upgrades
+      // but the corn stays at risk.
+      if (e.code === 'KeyB') endRun(true);
+      else nextLevel();
+      return;
+    }
     if (state === 'dead' || state === 'victory') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
       else if (e.code === 'KeyF' && state === 'victory') enterFarm();
@@ -1852,8 +1903,7 @@
         if (barnBlockedMsgTimer <= 0) barnBlockedMsgTimer = 1.5;
       } else {
         audio.levelClear();
-        if (isBossDepth(depth)) endRun(true);
-        else state = 'levelclear';
+        state = isBossDepth(depth) ? 'bossclear' : 'levelclear';
       }
     }
   }
@@ -2012,11 +2062,15 @@
 
   function spawnDeathEffect(e) {
     var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+    if (e.type === 'larva') {
+      emitParticles('feather', 4, cx, cy);
+      return;
+    }
     if (e.type === 'vulture') {
       emitParticles('feather', 14, cx, cy);
       spawnDrop('roast', cx, cy);
       spawnDrop('roast', cx, cy);
-    } else if (e.type === 'crow') {
+    } else if (e.type === 'crow' || e.type === 'fly') {
       // Poof of black feathers, and the bird itself comes out oven-ready.
       emitParticles('feather', 8, cx, cy);
       spawnDrop('roast', cx, cy);
@@ -2038,7 +2092,8 @@
     // Score is the kill reward; corn now comes from collecting the meat it
     // drops, so the two aren't paid out twice. The boss drops straw, not meat,
     // so it still pays its corn directly.
-    if (e.type === 'crow') addScore(SCORE_CROW);
+    if (e.type === 'crow' || e.type === 'fly') addScore(SCORE_CROW);
+    else if (e.type === 'larva') addScore(15);
     else if (e.type === 'vulture') addScore(SCORE_VULTURE);
     else if (isBoss(e)) { addScore(SCORE_BOSS); runCorn += 20; }
     else addScore(SCORE_BOAR);
@@ -2059,9 +2114,20 @@
       if (aabbOverlap(boxX, boxY, boxW, boxH, e.x, e.y, e.w, e.h)) {
         player.hitThisSwing[e.id] = true;
 
+        // The queen shrugs off hits while she's up out of reach; the oak only
+        // takes damage at the crown, which is why you climb it.
+        if (e.type === 'queen' && e.mode !== 'lay') {
+          e.hitFlash = 0.1;
+          continue;
+        }
+        if (e.type === 'oak' && (player.y + player.h) > e.y + 22) {
+          e.hitFlash = 0.1;
+          continue;
+        }
+
         // Catching a bird from directly underneath skewers it outright - the
         // tines go straight up into it and there's nowhere for it to go.
-        var isBird = e.type === 'crow' || e.type === 'vulture';
+        var isBird = e.type === 'crow' || e.type === 'fly' || e.type === 'vulture';
         if (isBird && (e.y + e.h) <= player.y + 2) {
           e.hitFlash = 0.12;
           audio.skewer();
@@ -2144,12 +2210,26 @@
       if (e.dead) continue;
       if (!aabbOverlap(player.x, player.y, player.w, player.h, e.x, e.y, e.w, e.h)) continue;
 
+      // The oak's body is bark: only its sweeping limb hurts, handled below.
+      if (e.type === 'oak') {
+        var limbLive = e.sweepState === 'sweep';
+        var limbY = GROUND_Y - 10;
+        var limbX = e.x - 46;
+        if (limbLive && player.hitInvuln <= 0 && player.rolling <= 0 &&
+          aabbOverlap(limbX, limbY, 46, 10, player.x, player.y, player.w, player.h)) {
+          player.hp -= 1;
+          player.hitInvuln = PLAYER_HIT_INVULN;
+          audio.hitPlayer();
+        }
+        continue;
+      }
+
       // The combine flattens ordinary critters, but the boss can still hurt
       // it - otherwise the fight would be riskless once you have the keys.
       if (combineActive && !isBoss(e)) {
         // A crow diving onto the roof is above the header and gets through;
         // anything that meets the front of the machine is flattened.
-        var overTheTop = e.type === 'crow' && (e.y + e.h) < player.y + player.h * 0.45;
+        var overTheTop = (e.type === 'crow' || e.type === 'fly') && (e.y + e.h) < player.y + player.h * 0.45;
         if (!overTheTop) {
           killEnemy(e);
           continue;
@@ -2258,7 +2338,7 @@
         // Dry pits are still an instant, unrewarded loss.
         e.dead = true;
       }
-    } else if (e.type === 'crow') {
+    } else if (e.type === 'crow' || e.type === 'fly') {
       e.phase += dt * 3;
       if (e.hitFlash > 0) {
         e.vy += 200 * dt;
@@ -2381,6 +2461,114 @@
         }
       }
       updateGrounded(e, dt, plats);
+    } else if (e.type === 'larva') {
+      // Squirms slowly, turns at edges, and hatches on a timer. Killing it
+      // before it matures is the whole point of clearing adds fast.
+      e.phase += dt * 7;
+      if (!e.patrolDir) e.patrolDir = 1;
+      if (e.onGround && (!groundAhead(e, e.patrolDir) || solidAhead(e, e.patrolDir))) {
+        e.patrolDir *= -1;
+      }
+      e.facing = e.patrolDir;
+      // Inch along rather than walk - speed pulses with the squirm.
+      e.vx = e.patrolDir * def.speed * (0.55 + 0.45 * Math.abs(Math.sin(e.phase)));
+      updateGrounded(e, dt, plats);
+      if (e.fellOut) e.dead = true;
+
+      e.matureTimer -= dt;
+      if (e.matureTimer <= 0 && !e.dead) {
+        // Hatch: same slot, now a fly with crow stats.
+        var fly = makeEnemy('fly', e.x, e.y - 6);
+        fly.bossSpawned = e.bossSpawned;
+        fly.spawnX = e.x;
+        fly.spawnY = e.y - 6;
+        enemies.push(fly);
+        emitParticles('feather', 3, e.x + e.w / 2, e.y + e.h / 2);
+        e.dead = true;
+        audio.hitEnemy();
+      }
+    } else if (e.type === 'rustbucket') {
+      // Grinds back and forth along the ground, reversing at edges. Every so
+      // often it belches chaff that lingers as a hazard, so standing on the
+      // ground near it is a bad idea.
+      e.phase += dt * 8;
+      if (!e.patrolDir) e.patrolDir = -1;
+      if (!groundAhead(e, e.patrolDir) || e.x <= 2 || e.x + e.w >= levelWidth - 2) {
+        e.patrolDir *= -1;
+      }
+      e.facing = e.patrolDir;
+      e.vx = e.patrolDir * def.speed;
+      e.chaffTimer = (e.chaffTimer || CHAFF_INTERVAL) - dt;
+      if (e.chaffTimer <= 0) {
+        e.chaffTimer = CHAFF_INTERVAL;
+        var backX = e.x + (e.facing > 0 ? 0 : e.w);
+        for (var ch = 0; ch < 7; ch++) {
+          particles.push({
+            x: backX, y: e.y + 4 + Math.random() * 8,
+            vx: -e.facing * (18 + Math.random() * 26), vy: -14 - Math.random() * 18,
+            life: 1.2, maxLife: 1.2, kind: 'straw',
+            angle: Math.random() * Math.PI * 2, spin: (Math.random() - 0.5) * 8, wave: 0
+          });
+        }
+        audio.slam();
+      }
+      updateGrounded(e, dt, plats);
+    } else if (e.type === 'queen') {
+      // Hovers above melee reach spilling crows, then sinks to lay - the only
+      // window where she can be hit.
+      e.phase += dt * 3;
+      if (!e.mode) { e.mode = 'hover'; e.modeTimer = QUEEN_LAY_INTERVAL; }
+      var tgtX = player.x + player.w / 2 - e.w / 2;
+      e.facing = (player.x + player.w / 2) > (e.x + e.w / 2) ? 1 : -1;
+
+      if (e.mode === 'hover') {
+        e.x += Math.max(-1, Math.min(1, (tgtX - e.x) * 0.02)) * def.speed * dt * 2;
+        e.y = QUEEN_HOVER_Y + Math.sin(e.phase) * 4;
+        e.modeTimer -= dt;
+        if (e.modeTimer <= 0) { e.mode = 'lay'; e.modeTimer = 1.6; audio.vultureCry(); }
+      } else {
+        // Sinking to ground height, vulnerable, dropping a clutch of grubs on
+        // the way down, then climbing back out.
+        e.modeTimer -= dt;
+        var layY = GROUND_Y - e.h - 4;
+        e.y += (layY - e.y) * Math.min(1, 4 * dt);
+        if (!e.laid && e.y > layY - 12) {
+          e.laid = true;
+          var alive2 = 0;
+          for (var q = 0; q < enemies.length; q++) {
+            if (enemies[q].bossSpawned && !enemies[q].dead) alive2++;
+          }
+          var clutch = Math.min(3, BOSS_CROW_CONCURRENT_CAP - alive2);
+          for (var lv = 0; lv < clutch && e.crowSpawnCount < BOSS_CROW_CAP; lv++) {
+            var lg = makeEnemy('larva', e.x + e.w / 2 + (lv - 1) * 9, GROUND_Y - ENEMY_DEFS.larva.h);
+            lg.bossSpawned = true;
+            lg.matureTimer = LARVA_MATURE_TIME;
+            lg.patrolDir = lv % 2 ? 1 : -1;
+            enemies.push(lg);
+            e.crowSpawnCount++;
+          }
+        }
+        if (e.modeTimer <= 0) {
+          e.mode = 'hover';
+          e.modeTimer = QUEEN_LAY_INTERVAL;
+          e.laid = false;
+        }
+      }
+      e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
+    } else if (e.type === 'oak') {
+      // Rooted. Sweeps a limb along the ground on a timer; the crown is the
+      // only thing worth hitting, so you climb rather than trade blows.
+      e.phase += dt * 2;
+      e.facing = -1;
+      e.sweepTimer = (e.sweepTimer || OAK_SWEEP_INTERVAL) - dt;
+      if (e.sweepState === 'sweep') {
+        e.sweepTimer -= dt;
+        if (e.sweepTimer <= -0.55) { e.sweepState = 'idle'; e.sweepTimer = OAK_SWEEP_INTERVAL; }
+      } else if (e.sweepTimer <= 0) {
+        e.sweepState = 'sweep';
+        e.sweepTimer = 0;
+        audio.bossSwing();
+      }
     } else if (e.type === 'scarecrow') {
       e.facing = player.x > e.x ? 1 : -1;
 
@@ -2467,7 +2655,7 @@
       if (state === 'title') {
         for (var i = 0; i < enemies.length; i++) {
           var e = enemies[i];
-          if (e.type === 'crow' && !e.dead) {
+          if ((e.type === 'crow' || e.type === 'fly') && !e.dead) {
             e.phase += dt * 3;
             e.y = e.spawnY + Math.sin(e.phase) * 6;
           }
@@ -3159,7 +3347,7 @@
       ctx.fillRect(3.5, -1.9, 1, 1);
 
       ctx.restore();
-    } else if (e.type === 'crow') {
+    } else if (e.type === 'crow' || e.type === 'fly') {
       // Drawn facing +x and mirrored: a sleek corvid rather than a blob -
       // long wedge tail, thick straight beak, and two wings whose feather
       // tips separate on the downbeat.
@@ -3472,6 +3660,196 @@
       }
 
       ctx.restore();
+    } else if (e.type === 'larva') {
+      var lw = e.w, lh = e.h;
+      ctx.save();
+      ctx.translate(e.x + lw / 2, e.y + lh / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 0.7;
+
+      // Body as overlapping segments, squirming along its length.
+      var segs = 4;
+      for (var sg = 0; sg < segs; sg++) {
+        var t2 = sg / (segs - 1);
+        var sxp = -lw / 2 + 1.5 + t2 * (lw - 3);
+        var syp = Math.sin(e.phase - sg * 0.9) * 1.1;
+        var rad = 2.4 - Math.abs(t2 - 0.35) * 1.2;
+        ctx.fillStyle = flashing ? COLOR.flash : (sg === segs - 1 ? COLOR.larvaHead : COLOR.larva);
+        ctx.beginPath();
+        ctx.arc(sxp, syp, Math.max(1.1, rad), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.stroke();
+      }
+      // Dark speck of an eye on the head segment.
+      ctx.fillStyle = COLOR.outline;
+      ctx.fillRect(lw / 2 - 2, Math.sin(e.phase - (segs - 1) * 0.9) * 1.1 - 0.5, 0.9, 0.9);
+
+      // Nearly-hatched grubs twitch faster and flash.
+      if (e.matureTimer < 1) {
+        ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(time * 14));
+        ctx.strokeStyle = COLOR.queenLit;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, lw / 2 + 1.5, lh / 2 + 1.5, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    } else if (e.type === 'rustbucket') {
+      // A bigger, rustier cousin of the player's combine.
+      var rx = e.x, ry = e.y, rw = e.w, rh = e.h;
+      ctx.save();
+      ctx.translate(rx + rw / 2, ry + rh / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = COLOR.wheel;
+      [-9, 0, 9].forEach(function (wx) {
+        ctx.beginPath();
+        ctx.arc(wx, rh / 2 - 1, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.stroke();
+      });
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.rust;
+      ctx.fillRect(-rw / 2, -rh / 2 + 3, rw, rh - 6);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.strokeRect(-rw / 2 + 0.5, -rh / 2 + 3.5, rw - 1, rh - 7);
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.rustDark;
+      for (var pt = 0; pt < 5; pt++) {
+        ctx.fillRect(-rw / 2 + 3 + pt * 5.5, -rh / 2 + 5 + (pt % 2) * 4, 3, 3);
+      }
+
+      ctx.fillStyle = COLOR.rustDark;
+      ctx.fillRect(-rw / 2 + 2, -rh / 2 - 4, 7, 8);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.strokeRect(-rw / 2 + 2.5, -rh / 2 - 3.5, 6, 7);
+
+      // Spinning header at the front.
+      var hx = rw / 2 - 3;
+      ctx.fillStyle = COLOR.combineHeader;
+      ctx.fillRect(hx - 1, rh / 2 - 9, 5, 9);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.strokeRect(hx - 0.5, rh / 2 - 8.5, 4, 8);
+      ctx.strokeStyle = COLOR.rustDark;
+      for (var rr = 0; rr < 3; rr++) {
+        var ra = e.phase + rr * (Math.PI * 2 / 3);
+        ctx.beginPath();
+        ctx.moveTo(hx + 1.5 + Math.cos(ra) * 3, rh / 2 - 4 + Math.sin(ra) * 3);
+        ctx.lineTo(hx + 1.5 - Math.cos(ra) * 3, rh / 2 - 4 - Math.sin(ra) * 3);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (e.type === 'queen') {
+      var qw = e.w, qh = e.h;
+      var laying = e.mode === 'lay';
+      ctx.save();
+      ctx.translate(e.x + qw / 2, e.y + qh / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 1;
+
+      // Blur of wings.
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = COLOR.wing;
+      [-1, 1].forEach(function (sg) {
+        ctx.beginPath();
+        ctx.ellipse(-2, sg * (4 + Math.sin(e.phase * 6) * 1.5), 8, 3.2, sg * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = flashing ? COLOR.flash : (laying ? COLOR.queenLit : COLOR.queen);
+      ctx.beginPath();
+      ctx.ellipse(-3, 0, 8, 5.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.queenDark;
+      for (var bd = -1; bd <= 2; bd++) {
+        ctx.beginPath();
+        ctx.moveTo(-3 + bd * 3, -4.6);
+        ctx.lineTo(-3 + bd * 3, 4.6);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.queenDark;
+      ctx.beginPath();
+      ctx.arc(6.5, -1, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+      ctx.fillStyle = COLOR.bad;
+      [[7.8, -2.4], [7.8, 0.4]].forEach(function (ey) {
+        ctx.beginPath();
+        ctx.arc(ey[0], ey[1], 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      if (laying) {
+        ctx.strokeStyle = COLOR.queenLit;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-10, 3);
+        ctx.lineTo(-13, 7);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (e.type === 'oak') {
+      var ox = e.x, oy = e.y, ow = e.w, oh = e.h;
+      var swinging = e.sweepState === 'sweep';
+
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.trunk;
+      ctx.beginPath();
+      ctx.moveTo(ox - 4, oy + oh);
+      ctx.quadraticCurveTo(ox + 3, oy + oh * 0.45, ox + 6, oy + 4);
+      ctx.lineTo(ox + ow - 6, oy + 4);
+      ctx.quadraticCurveTo(ox + ow - 3, oy + oh * 0.45, ox + ow + 4, oy + oh);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Sweeping limb - the thing that actually hurts.
+      ctx.strokeStyle = flashing ? COLOR.flash : COLOR.trunkDark;
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ox + 4, oy + oh - 22);
+      if (swinging) {
+        ctx.quadraticCurveTo(ox - 22, GROUND_Y - 16, ox - 44, GROUND_Y - 7);
+      } else {
+        ctx.quadraticCurveTo(ox - 12, oy + oh - 34, ox - 20, oy + oh - 44);
+      }
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+
+      // Crown: the weak point, lit when reachable.
+      ctx.fillStyle = COLOR.leaf;
+      [[ow / 2, -4, 13], [6, 3, 8], [ow - 6, 3, 8]].forEach(function (b) {
+        ctx.beginPath();
+        ctx.arc(ox + b[0], oy + b[1], b[2], 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(ox + ow / 2, oy - 4, 13, Math.PI * 0.85, Math.PI * 2.15);
+      ctx.stroke();
+
+      // A face in the bark.
+      ctx.fillStyle = COLOR.outline;
+      ctx.beginPath();
+      ctx.ellipse(ox + ow / 2 - 5, oy + 16, 2.2, 3, 0, 0, Math.PI * 2);
+      ctx.ellipse(ox + ow / 2 + 5, oy + 16, 2.2, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(ox + ow / 2 - 5, oy + 24);
+      ctx.quadraticCurveTo(ox + ow / 2, oy + 29, ox + ow / 2 + 5, oy + 24);
+      ctx.stroke();
     } else if (e.type === 'scarecrow') {
       var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
       var scx = sx + sw / 2;
@@ -3733,7 +4111,7 @@
     ctx.textAlign = 'center';
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.hud;
-    ctx.fillText(boss.type === 'bull' ? 'THE BULL' : 'SCARECROW', W / 2, y - 3);
+    ctx.fillText(BOSS_NAMES[boss.type] || 'BOSS', W / 2, y - 3);
     ctx.fillStyle = COLOR.hpEmpty;
     ctx.fillRect(x, y, barW, barH);
     ctx.fillStyle = COLOR.bad;
@@ -4012,6 +4390,17 @@
         { text: 'DEPTH ' + depth + ' DONE   CORN ' + runCorn, size: 7 },
         { text: '', size: 4 },
         { text: 'ANY KEY: DESCEND', size: 7 }
+      ]);
+    } else if (state === 'bossclear') {
+      var nextBoss = bossTypeFor(depth + BOSS_INTERVAL);
+      drawOverlayText([
+        { text: BOSS_NAMES[bossTypeFor(depth)] + ' DOWN', size: 13, color: COLOR.good },
+        { text: '', size: 4 },
+        { text: 'DEPTH ' + depth + '   CARRYING ' + runCorn + ' CORN', size: 7 },
+        { text: 'NEXT DOWN THERE: ' + BOSS_NAMES[nextBoss], size: 6, color: COLOR.dim },
+        { text: '', size: 4 },
+        { text: 'ANY KEY: PUSH DEEPER', size: 7 },
+        { text: 'B: BANK OUT AND KEEP IT ALL', size: 6, color: COLOR.title }
       ]);
     } else if (state === 'dead') {
       drawOverlayText([

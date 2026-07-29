@@ -392,6 +392,10 @@
       levelClear: function () {
         [523, 659, 784, 1047].forEach(function (f, i) { beep(f, 0.2, 'square', 0.09, i * 0.12); });
       },
+      bullSnort: function () {
+        sweep(180, 70, 0.3, 'sawtooth', 0.12);
+        noiseBurst(0.16, 0.09);
+      },
       bossSwing: function () { sweep(150, 60, 0.2, 'sawtooth', 0.1); },
       slam: function () {
         sweep(220, 40, 0.35, 'sawtooth', 0.14);
@@ -448,7 +452,16 @@
   var PLAYER_HIT_INVULN = 0.8;
 
   var GROUND_Y = 164;
-  var FINAL_DEPTH = 5;
+  // A boss every five levels rather than a single hard stop. Beating one lets
+  // you bank out or push deeper with your upgrades intact.
+  var BOSS_INTERVAL = 5;
+  var BOSS_ORDER = ['scarecrow', 'bull'];
+  function isBossDepth(d) { return d % BOSS_INTERVAL === 0; }
+  function bossTypeFor(d) {
+    var idx = Math.floor(d / BOSS_INTERVAL) - 1;
+    return BOSS_ORDER[Math.min(idx, BOSS_ORDER.length - 1)];
+  }
+  function bossTierFor(d) { return Math.floor(d / BOSS_INTERVAL); }
   var CORN_PER_UPGRADE = 5;
 
   // Single-jump horizontal reach is ~43px (0.79s airtime x 55px/s), so gaps
@@ -474,6 +487,7 @@
     crate: '#c68a45', crateDark: '#8a5a2c',
     player: '#3d6fd1', skin: '#f2c294', fork: '#d8dbe0', forkHandle: '#6a4526',
     crow: '#1e1e1e', crowBeak: '#4a4a52', crowSheen: '#3d4655', crowEye: '#e8c15a',
+    bull: '#3a2f2a', bullDark: '#241c18', bullMuzzle: '#c99a86', bullRing: '#e8c15a',
     vulture: '#4a3f38', vultureDark: '#2f2823', vultureRuff: '#d8cdb8', vultureHead: '#c98d7a',
     boar: '#a8703f', boarDark: '#6a4526', boarLight: '#f5f1e6',
     barnWall: '#c1432f', barnRoof: '#7a2e1f', barnDoor: '#4a2c18', barnTrim: '#f5f1e6',
@@ -509,6 +523,9 @@
   var VULTURE_TELEGRAPH = 0.45;
   var VULTURE_DIVE_TIME = 1.1;
   var VULTURE_COOLDOWN = 1.2;
+  var BULL_PAW_TIME = 0.7;
+  var BULL_RECOVER_TIME = 0.85;
+  var BULL_CHARGE_MAX = 2.4;
   var BOAR_DROWN_TIME = 2.6;
   var BOAR_PADDLE_SPEED = 14;
 
@@ -715,15 +732,24 @@
     };
   }
 
-  function makeBoss(x, y) {
-    var e = makeEnemy('scarecrow', x, y);
+  function makeBoss(x, y, type, tier) {
+    var e = makeEnemy(type, x, y);
+    // Each tier past the first toughens the boss so a deeper push means more.
+    e.hp = Math.round(ENEMY_DEFS[type].hp * (1 + 0.35 * Math.max(0, tier - 1)));
+    e.maxHp = e.hp;
     e.crowSpawnCount = 0;
     e.spawnTimer = BOSS_SPAWN_INTERVAL;
     e.atkState = 'idle';
     e.atkTimer = 0;
     e.atkHit = false;
+    // Bull-specific: charge state machine and the lane it runs along.
+    e.mode = 'paw';
+    e.modeTimer = BULL_PAW_TIME;
+    e.chargeDir = -1;
     return e;
   }
+
+  function isBoss(e) { return e.type === 'scarecrow' || e.type === 'bull'; }
 
   // Generates a left-to-right chain of ground slabs separated by jumpable
   // gaps, so every level is traversable by construction rather than by
@@ -733,7 +759,7 @@
   function mergeFlushGround() {
     var ground = [], others = [];
     for (var i = 0; i < platforms.length; i++) {
-      (platforms[i].h > 10 ? ground : others).push(platforms[i]);
+      (platforms[i].h > 10 && !platforms[i].bale ? ground : others).push(platforms[i]);
     }
     ground.sort(function (a, b) { return a.x - b.x; });
 
@@ -760,7 +786,7 @@
     particles = [];
     drops = [];
 
-    hasBoss = depth >= FINAL_DEPTH;
+    hasBoss = isBossDepth(depth);
     // At most a couple of guarded apple trees per level, often none.
     var appleQuota = Math.floor(rng() * 3);
 
@@ -845,7 +871,7 @@
         var haW = 15;
         var haX = Math.round(slab.x + 8 + rng() * Math.max(1, usableW - haW - 16));
         if (haX + haW > decorLimit) continue;
-        platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: 5, bale: true });
+        platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: BALE_H, bale: true, solid: true });
         if (rng() < 0.35) {
           corns.push({ x: haX + haW / 2 - 2.5, y: GROUND_Y - BALE_H - 9, w: 5, h: 6, collected: false, kind: 'corn' });
         }
@@ -873,7 +899,10 @@
       }
     }
 
-    if (hasBoss) enemies.push(makeBoss(exitX - 26, GROUND_Y - ENEMY_DEFS.scarecrow.h));
+    if (hasBoss) {
+      var bt = bossTypeFor(depth);
+      enemies.push(makeBoss(exitX - 30, GROUND_Y - ENEMY_DEFS[bt].h, bt, bossTierFor(depth)));
+    }
   }
 
 
@@ -883,7 +912,20 @@
     var probeY = e.y + e.h + 2;
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
+      if (p.bale) continue;   // an obstacle, not footing - see solidAhead
       if (probeX >= p.x && probeX <= p.x + p.w && probeY >= p.y && probeY <= p.y + p.h) return true;
+    }
+    return false;
+  }
+
+  // Is there a solid obstacle immediately in front of this entity?
+  function solidAhead(e, dir) {
+    var probeX = dir > 0 ? e.x + e.w + 1 : e.x - 1;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p.solid) continue;
+      if (probeX < p.x || probeX > p.x + p.w) continue;
+      if (e.y + e.h > p.y + 1 && e.y < p.y + p.h) return true;
     }
     return false;
   }
@@ -1576,10 +1618,27 @@
   }
 
   // --------------------------------------------------------------- physics -
+  // Push an entity back out of any solid obstacle it just walked into. Only
+  // blocks when its body actually straddles the obstacle - if its feet are at
+  // or above the top surface it's standing on it, not colliding with it.
+  function resolveSolids(e, plats, prevX) {
+    for (var i = 0; i < plats.length; i++) {
+      var p = plats[i];
+      if (!p.solid) continue;
+      if (e.y + e.h <= p.y + 1) continue;
+      if (e.y >= p.y + p.h) continue;
+      if (e.x + e.w <= p.x || e.x >= p.x + p.w) continue;
+      if (prevX + e.w <= p.x + 0.5) e.x = p.x - e.w;
+      else if (prevX >= p.x + p.w - 0.5) e.x = p.x + p.w;
+    }
+  }
+
   function updateGrounded(e, dt, plats, skipThin) {
     var prevBottom = e.y + e.h;
+    var prevX = e.x;
     e.x += e.vx * dt;
     e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
+    resolveSolids(e, plats, prevX);
 
     e.vy += GRAVITY * dt;
     if (e.vy > MAX_FALL_SPEED) e.vy = MAX_FALL_SPEED;
@@ -1769,7 +1828,7 @@
         if (barnBlockedMsgTimer <= 0) barnBlockedMsgTimer = 1.5;
       } else {
         audio.levelClear();
-        if (depth >= FINAL_DEPTH) endRun(true);
+        if (isBossDepth(depth)) endRun(true);
         else state = 'levelclear';
       }
     }
@@ -1777,7 +1836,7 @@
 
   function isBossAlive() {
     for (var i = 0; i < enemies.length; i++) {
-      if (enemies[i].type === 'scarecrow' && !enemies[i].dead) return true;
+      if (isBoss(enemies[i]) && !enemies[i].dead) return true;
     }
     return false;
   }
@@ -1937,14 +1996,14 @@
       // Poof of black feathers, and the bird itself comes out oven-ready.
       emitParticles('feather', 8, cx, cy);
       spawnDrop('roast', cx, cy);
-    } else if (e.type === 'scarecrow') {
+    } else if (isBoss(e)) {
       emitParticles('straw', 14, cx, cy);
     } else {
       for (var b = 0; b < 3; b++) spawnDrop('bacon', cx, cy);
     }
 
     // Animals occasionally leave something restorative behind.
-    if (e.type !== 'scarecrow' && Math.random() < HEALTH_DROP_CHANCE) {
+    if (!isBoss(e) && Math.random() < HEALTH_DROP_CHANCE) {
       spawnDrop('health', cx, cy);
     }
   }
@@ -1957,10 +2016,10 @@
     // so it still pays its corn directly.
     if (e.type === 'crow') addScore(SCORE_CROW);
     else if (e.type === 'vulture') addScore(SCORE_VULTURE);
-    else if (e.type === 'scarecrow') { addScore(SCORE_BOSS); runCorn += 20; }
+    else if (isBoss(e)) { addScore(SCORE_BOSS); runCorn += 20; }
     else addScore(SCORE_BOAR);
     spawnDeathEffect(e);
-    audio.death(e.type === 'crow' ? 'feather' : e.type === 'scarecrow' ? 'straw' : 'bacon');
+    audio.death(e.type === 'crow' || e.type === 'vulture' ? 'feather' : isBoss(e) ? 'straw' : 'bacon');
   }
 
   function resolveAttack() {
@@ -2047,7 +2106,7 @@
 
       // The combine flattens ordinary critters, but the boss can still hurt
       // it - otherwise the fight would be riskless once you have the keys.
-      if (combineActive && e.type !== 'scarecrow') {
+      if (combineActive && !isBoss(e)) {
         // A crow diving onto the roof is above the header and gets through;
         // anything that meets the front of the machine is flattened.
         var overTheTop = e.type === 'crow' && (e.y + e.h) < player.y + player.h * 0.45;
@@ -2066,7 +2125,7 @@
       // instead of costing health. One damage per stomp, so with their existing
       // health that's two stomps for a boar and one for a crow. The boss is too
       // big to vault off.
-      if (!combineActive && player.vy > 0 && e.type !== 'scarecrow' && e.type !== 'vulture' &&
+      if (!combineActive && player.vy > 0 && !isBoss(e) && e.type !== 'vulture' &&
         (player.y + player.h) < e.y + e.h * 0.6) {
         e.hp -= 1;
         e.hitFlash = 0.12;
@@ -2142,7 +2201,9 @@
           if (Math.abs(e.x - e.spawnX) > 25) e.patrolDir = e.x > e.spawnX ? -1 : 1;
           // Turn around at a ledge. Only an active charge commits past the
           // edge, so a boar only drowns itself if you bait it across.
-          if (e.onGround && !groundAhead(e, e.patrolDir)) e.patrolDir *= -1;
+          if (e.onGround && (!groundAhead(e, e.patrolDir) || solidAhead(e, e.patrolDir))) {
+            e.patrolDir *= -1;
+          }
           e.facing = e.patrolDir;
           e.vx = e.patrolDir * def.speed;
         }
@@ -2240,6 +2301,46 @@
       }
       e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
       e.y = Math.max(4, Math.min(GROUND_Y - e.h, e.y));
+    } else if (e.type === 'bull') {
+      e.phase += dt * 6;
+      if (e.mode === 'paw') {
+        // Pawing the ground, facing the player. This is the tell.
+        e.vx = 0;
+        e.facing = (player.x + player.w / 2) > (e.x + e.w / 2) ? 1 : -1;
+        e.modeTimer -= dt;
+        if (e.modeTimer <= 0) {
+          e.chargeDir = e.facing;
+          e.mode = 'charge';
+          e.modeTimer = BULL_CHARGE_MAX;
+          audio.bullSnort();
+        }
+      } else if (e.mode === 'charge') {
+        e.modeTimer -= dt;
+        e.facing = e.chargeDir;
+        e.vx = e.chargeDir * def.chargeSpeed;
+        // Running out of arena, or out of ground, ends the charge in a recoil.
+        var atEdge = (e.chargeDir < 0 && e.x <= 2) ||
+          (e.chargeDir > 0 && e.x + e.w >= levelWidth - 2) ||
+          !groundAhead(e, e.chargeDir);
+        if (atEdge || e.modeTimer <= 0) {
+          e.mode = 'recoil';
+          e.modeTimer = BULL_RECOVER_TIME;
+          e.vx = -e.chargeDir * 40;
+          if (atEdge) {
+            slamFx = 0.4;
+            audio.slam();
+          }
+        }
+      } else {
+        // Shaking it off, then straight back to pawing for the next run.
+        e.modeTimer -= dt;
+        e.vx *= Math.max(0, 1 - 5 * dt);
+        if (e.modeTimer <= 0) {
+          e.mode = 'paw';
+          e.modeTimer = BULL_PAW_TIME;
+        }
+      }
+      updateGrounded(e, dt, plats);
     } else if (e.type === 'scarecrow') {
       e.facing = player.x > e.x ? 1 : -1;
 
@@ -2598,8 +2699,8 @@
   function drawPlatforms() {
     for (var i = 0; i < platforms.length; i++) {
       var p = platforms[i];
-      if (p.h > 10) drawSlab(p);
-      else if (p.bale) drawBale(p);
+      if (p.bale) drawBale(p);
+      else if (p.h > 10) drawSlab(p);
       else if (p.branch) drawBranch(p);
       else drawLedge(p);
     }
@@ -3216,6 +3317,121 @@
       ctx.fill();
 
       ctx.restore();
+    } else if (e.type === 'bull') {
+      var bulk = flashing ? COLOR.flash : COLOR.bull;
+      var charging = e.mode === 'charge';
+      var pawing = e.mode === 'paw';
+
+      ctx.save();
+      ctx.translate(e.x + e.w / 2, e.y + e.h / 2);
+      ctx.scale(e.facing, 1);
+      ctx.lineWidth = 1;
+
+      // Legs - splayed mid-charge, one pawing when winding up.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.bullDark;
+      var legSwing = charging ? Math.sin(e.phase) * 2.5 : 0;
+      var pawLift = pawing ? Math.abs(Math.sin(e.phase)) * 2 : 0;
+      [[-8, legSwing], [-5.5, -legSwing], [6, -legSwing], [8.5, legSwing - pawLift]]
+        .forEach(function (lg) {
+          ctx.fillRect(lg[0], 5 + lg[1] * 0.2, 2.4, 5 - lg[1] * 0.2);
+          ctx.strokeStyle = COLOR.outline;
+          ctx.strokeRect(lg[0] + 0.5, 5.5 + lg[1] * 0.2, 1.4, 4 - lg[1] * 0.2);
+        });
+
+      // Tail.
+      ctx.strokeStyle = flashing ? COLOR.flash : COLOR.bullDark;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-11, -2);
+      ctx.quadraticCurveTo(-14, -1 + (charging ? -3 : 2), -12.5, 3);
+      ctx.stroke();
+
+      // Heavy body with a shoulder hump.
+      ctx.beginPath();
+      ctx.moveTo(-11, 3);
+      ctx.bezierCurveTo(-13, -2, -9, -7, -3, -7.4);
+      ctx.bezierCurveTo(3, -7.8, 7, -6, 9.5, -3.5);
+      ctx.bezierCurveTo(12, -1, 12.5, 3, 10, 5);
+      ctx.bezierCurveTo(4, 6.5, -5, 6.5, -11, 3);
+      ctx.closePath();
+      ctx.fillStyle = bulk;
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Lowered head when charging, raised when pawing.
+      var headY = charging ? 1.5 : -1;
+      ctx.save();
+      ctx.translate(10, headY);
+      ctx.fillStyle = bulk;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 4.6, 3.8, charging ? 0.35 : 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.stroke();
+
+      // Horns.
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-1.5, -2.6);
+      ctx.quadraticCurveTo(2.5, -5.2, 5.2, -2.6);
+      ctx.moveTo(-2.2, -1.6);
+      ctx.quadraticCurveTo(0.5, -4.6, 3.0, -3.4);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.boarLight;
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(-1.5, -2.6);
+      ctx.quadraticCurveTo(2.5, -5.2, 5.2, -2.6);
+      ctx.moveTo(-2.2, -1.6);
+      ctx.quadraticCurveTo(0.5, -4.6, 3.0, -3.4);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+
+      // Muzzle, nose ring and a red eye.
+      ctx.fillStyle = flashing ? COLOR.flash : COLOR.bullMuzzle;
+      ctx.beginPath();
+      ctx.ellipse(3.4, 1.6, 2.0, 1.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.bullRing;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(3.6, 3.2, 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = COLOR.bad;
+      ctx.beginPath();
+      ctx.arc(0.6, -1.2, 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Snorted dust while pawing, speed lines while charging.
+      if (pawing) {
+        ctx.fillStyle = 'rgba(245,241,230,0.5)';
+        for (var pd = 0; pd < 3; pd++) {
+          var px2 = 14 + pd * 3 + Math.sin(e.phase + pd) * 1.5;
+          ctx.beginPath();
+          ctx.arc(px2, 4 - pd, 1.4 - pd * 0.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (charging) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 0.8;
+        for (var sl = 0; sl < 3; sl++) {
+          var sy2 = -4 + sl * 4;
+          ctx.beginPath();
+          ctx.moveTo(-13 - sl * 2, sy2);
+          ctx.lineTo(-20 - sl * 3, sy2);
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
     } else if (e.type === 'scarecrow') {
       var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
       var scx = sx + sw / 2;
@@ -3469,7 +3685,7 @@
 
   function drawBossBar() {
     var boss = null;
-    for (var i = 0; i < enemies.length; i++) if (enemies[i].type === 'scarecrow') boss = enemies[i];
+    for (var i = 0; i < enemies.length; i++) if (isBoss(enemies[i])) boss = enemies[i];
     if (!boss || boss.dead) return;
     if (Math.abs(player.x - boss.x) > BOSS_AGGRO_RANGE * 1.6) return;
 
@@ -3477,7 +3693,7 @@
     ctx.textAlign = 'center';
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.hud;
-    ctx.fillText('SCARECROW', W / 2, y - 3);
+    ctx.fillText(boss.type === 'bull' ? 'THE BULL' : 'SCARECROW', W / 2, y - 3);
     ctx.fillStyle = COLOR.hpEmpty;
     ctx.fillRect(x, y, barW, barH);
     ctx.fillStyle = COLOR.bad;
@@ -3513,7 +3729,7 @@
     ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.hud;
     ctx.textAlign = 'center';
-    ctx.fillText('DEPTH ' + depth + '/' + FINAL_DEPTH, W / 2, 10);
+    ctx.fillText('DEPTH ' + depth, W / 2, 10);
     ctx.textAlign = 'right';
     ctx.fillText('CORN ' + runCorn + '   ' + pad(runScore), W - 4, 10);
 

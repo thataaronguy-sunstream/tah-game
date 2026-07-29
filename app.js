@@ -921,7 +921,7 @@
 
       // Platforms are branches growing off a trunk, stacked in tiers you can
       // climb. Apple trees run the full 4 tiers and post a vulture at the top.
-      if (usableW > 70 && rng() < 0.34) {
+      if (usableW > 70 && !(isTail && hasBoss) && rng() < 0.34) {
         var bearsApple = appleQuota > 0 && rng() < 0.45;
         if (bearsApple) appleQuota--;
         var tiers = bearsApple ? 4 : (2 + Math.floor(rng() * 2));
@@ -952,12 +952,18 @@
       }
 
       // Round bales dotted along the field: a low step up, and something to
-      // break up the ground now that trees are scarce.
-      var baleCount = rng() < 0.55 ? (rng() < 0.35 ? 2 : 1) : 0;
+      // break up the ground. Never in the boss arena - a solid obstacle there
+      // can pin the boss against a wall and stall the fight.
+      var baleCount = (isTail && hasBoss) ? 0
+        : (rng() < 0.34 ? (rng() < 0.18 ? 2 : 1) : 0);
       for (var hb = 0; hb < baleCount; hb++) {
         var haW = 15;
         var haX = Math.round(slab.x + 8 + rng() * Math.max(1, usableW - haW - 16));
         if (haX + haW > decorLimit) continue;
+        // Bales were only ever checked against the level edge, never against
+        // each other, so two could stack into one lump. Pad the test so they
+        // also can't end up flush.
+        if (overlapsSolid(haX - 6, GROUND_Y - BALE_H, haW + 12, BALE_H)) continue;
         platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: BALE_H, bale: true, solid: true });
         if (rng() < 0.35) {
           if (spotFree(haX + haW / 2 - 2.5, GROUND_Y - BALE_H - 9, 5, 6)) {

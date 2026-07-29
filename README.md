@@ -8,7 +8,7 @@ The homestead has a farmhouse and a market stall. Harvested crops are carried,
 not auto-sold - take them to the stall to cash them in. The farmhouse door
 opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 
-**Controls:** `A`/`D` move, `W` jump (tap for a short hop, hold for the full arc), `Space` attack, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
+**Controls:** `A`/`D` move, `Space` jump (tap for a short hop, hold for the full arc), `J` attack, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
 
 ## The loop
 

@@ -513,7 +513,7 @@
     soilWet: '#5f3c24', rock: '#9aa0a8', rockLight: '#d3d8de',
     hay: '#d9b465', hayDark: '#a8842f', hayLight: '#f0dc9a',
     trunk: '#6a4526', trunkDark: '#4a2f18', leaf: '#3f8f3a', leafLight: '#6fc257',
-    apple: '#d63a2f',
+    apple: '#d63a2f', appleDark: '#a3241d', appleStem: '#6a4526',
     siloBody: '#d8cdb8', siloDark: '#a89a80', siloRoof: '#7a8088',
     hud: '#2a1f18', hpEmpty: '#d8cdb8', title: '#e88a2a', dim: '#4a3f38',
     bad: '#e0392a', good: '#15702e', flash: '#ffffff',
@@ -1648,7 +1648,7 @@
 
   // ---------------------------------------------------------------- input --
   var keys = {};
-  var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'ShiftLeft', 'ShiftRight',
+  var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'Space', 'ShiftLeft', 'ShiftRight',
     'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Enter', 'Escape'];
   var jumpQueued = false, attackQueued = false, rollQueued = false, formQueued = false;
   var dropQueued = false;
@@ -1659,11 +1659,16 @@
     keys[e.code] = true;
     if (e.repeat) return;
 
-    if (e.code === 'KeyW') jumpQueued = true;
-    if (e.code === 'KeyS') dropQueued = true;
-    if (e.code === 'Space') attackQueued = true;
-    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') rollQueued = true;
-    if (e.code === 'KeyF') formQueued = true;
+    // Only queue actions while actually playing. Space doubles as the confirm
+    // key on menus and in the homestead, so queueing it anywhere else left a
+    // jump buffered that fired the instant a run started.
+    if (state === 'playing') {
+      if (e.code === 'Space') jumpQueued = true;
+      if (e.code === 'KeyS') dropQueued = true;
+      if (e.code === 'KeyJ') attackQueued = true;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') rollQueued = true;
+      if (e.code === 'KeyF') formQueued = true;
+    }
 
     if (state === 'title') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
@@ -1901,7 +1906,7 @@
     jumpQueued = false;
 
     // Cut the ascent once per jump, on the frame the key comes up.
-    if (!player.jumpCut && player.vy < 0 && !keys.KeyW) {
+    if (!player.jumpCut && player.vy < 0 && !keys.Space) {
       player.vy *= JUMP_CUT_MULT;
       player.jumpCut = true;
     }
@@ -3084,27 +3089,10 @@
       var cx = c.x + c.w / 2, cy = c.y + c.h / 2 + bob;
 
       if (c.kind === 'apple') {
-        ctx.fillStyle = COLOR.apple;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 3.1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = COLOR.outline;
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-        ctx.strokeStyle = COLOR.trunk;
-        ctx.lineWidth = 0.9;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - 2.6);
-        ctx.lineTo(cx + 0.6, cy - 4.6);
-        ctx.stroke();
-        ctx.fillStyle = COLOR.leaf;
-        ctx.beginPath();
-        ctx.ellipse(cx + 2.1, cy - 4.4, 1.7, 1.0, -0.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.beginPath();
-        ctx.ellipse(cx - 1.1, cy - 1.1, 0.7, 1.0, -0.4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.save();
+        ctx.translate(cx, cy);
+        drawAppleShape();
+        ctx.restore();
         continue;
       }
 
@@ -3119,6 +3107,67 @@
   // kernels and husk leaves peeling back. The kernel rows are what make it
   // read as corn rather than a yellow blob. Shared by the pickups, the
   // homestead's ripe crops and the market stall.
+
+  // An apple rather than a red dot: two lobes with a dimple at the top and a
+  // narrower base, a bite of shading down one side, a stem sunk into the
+  // dimple and a leaf off it. Centred on the origin.
+  function drawAppleShape() {
+    // Body. Widest above the middle, tapering to a slightly narrow base, with
+    // a dip in the top where the stem sits.
+    ctx.beginPath();
+    ctx.moveTo(0, -2.4);
+    ctx.bezierCurveTo(-0.9, -3.6, -2.9, -3.5, -3.4, -1.6);
+    ctx.bezierCurveTo(-3.9, 0.4, -2.6, 2.7, -1.0, 3.3);
+    ctx.bezierCurveTo(-0.35, 3.55, 0.35, 3.55, 1.0, 3.3);
+    ctx.bezierCurveTo(2.6, 2.7, 3.9, 0.4, 3.4, -1.6);
+    ctx.bezierCurveTo(2.9, -3.5, 0.9, -3.6, 0, -2.4);
+    ctx.closePath();
+    ctx.fillStyle = COLOR.apple;
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.55;
+    ctx.stroke();
+
+    // Shaded far side, so it reads round rather than flat.
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = COLOR.appleDark;
+    ctx.beginPath();
+    ctx.ellipse(2.5, 0.6, 2.4, 3.4, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Stem in the dimple, leaning with a leaf off it.
+    ctx.strokeStyle = COLOR.appleStem;
+    ctx.lineWidth = 0.85;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -2.5);
+    ctx.quadraticCurveTo(0.5, -4.0, 1.2, -4.7);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+
+    ctx.fillStyle = COLOR.leaf;
+    ctx.beginPath();
+    ctx.ellipse(2.5, -4.2, 1.8, 0.95, -0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+    ctx.strokeStyle = COLOR.leafLight;
+    ctx.lineWidth = 0.3;
+    ctx.beginPath();
+    ctx.moveTo(1.2, -3.9);
+    ctx.lineTo(3.7, -4.6);
+    ctx.stroke();
+
+    // Specular highlight on the lit side.
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.ellipse(-1.5, -1.2, 0.65, 1.1, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function drawCornEar() {
       // Green shucks: a long leaf either side peeled back past the tip, plus a
       // shorter pair, all behind the cob so the kernels stay readable.
@@ -4525,7 +4574,7 @@
       drawOverlayText([
         { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
-        { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
+        { text: 'A/D MOVE   SPACE JUMP (HOLD=HIGHER)   S DROP   J ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }

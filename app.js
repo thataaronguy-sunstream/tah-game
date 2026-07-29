@@ -800,6 +800,23 @@
   // post-hoc validation.
   // Any two ground slabs that touch exactly become a single rectangle, so no
   // interior edges get outlined. Thin platforms are left untouched.
+  // Is a pickup already sitting here? Padded so two cobs never crowd into
+  // what looks like one. A slab can spawn two cobs, and without this they can
+  // land on top of each other and read as a single doubled-up pickup.
+  var CORN_MIN_GAP = 4;
+  function overlapsCorn(x, y, w, h) {
+    for (var i = 0; i < corns.length; i++) {
+      var c = corns[i];
+      if (aabbOverlap(x - CORN_MIN_GAP, y - CORN_MIN_GAP, w + CORN_MIN_GAP * 2, h + CORN_MIN_GAP * 2,
+        c.x, c.y, c.w, c.h)) return true;
+    }
+    return false;
+  }
+
+  function spotFree(x, y, w, h) {
+    return !overlapsSolid(x, y, w, h) && !overlapsCorn(x, y, w, h);
+  }
+
   // Does this rect intersect any solid obstacle already placed?
   function overlapsSolid(x, y, w, h) {
     for (var i = 0; i < platforms.length; i++) {
@@ -908,12 +925,16 @@
           bx = Math.max(slab.x, Math.min(decorLimit - bw, bx));
           platforms.push({ x: bx, y: by, w: bw, h: 5, branch: true, side: side, trunkX: trunkX });
           if (!bearsApple && ti > 0 && rng() < 0.4) {
-            corns.push({ x: bx + bw / 2 - 2.5, y: by - 8, w: 5, h: 6, collected: false, kind: 'corn' });
+            if (spotFree(bx + bw / 2 - 2.5, by - 8, 5, 6)) {
+              corns.push({ x: bx + bw / 2 - 2.5, y: by - 8, w: 5, h: 6, collected: false, kind: 'corn' });
+            }
           }
         }
 
         if (bearsApple) {
-          corns.push({ x: trunkX - 3, y: topBranchY - 16, w: 6, h: 7, collected: false, kind: 'apple' });
+          if (spotFree(trunkX - 3, topBranchY - 16, 6, 7)) {
+            corns.push({ x: trunkX - 3, y: topBranchY - 16, w: 6, h: 7, collected: false, kind: 'apple' });
+          }
           enemies.push(makeEnemy('vulture', trunkX - 8, topBranchY - 30));
         }
       }
@@ -927,7 +948,9 @@
         if (haX + haW > decorLimit) continue;
         platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: BALE_H, bale: true, solid: true });
         if (rng() < 0.35) {
-          corns.push({ x: haX + haW / 2 - 2.5, y: GROUND_Y - BALE_H - 9, w: 5, h: 6, collected: false, kind: 'corn' });
+          if (spotFree(haX + haW / 2 - 2.5, GROUND_Y - BALE_H - 9, 5, 6)) {
+            corns.push({ x: haX + haW / 2 - 2.5, y: GROUND_Y - BALE_H - 9, w: 5, h: 6, collected: false, kind: 'corn' });
+          }
         }
       }
 
@@ -938,7 +961,7 @@
         var placed = false;
         for (var attempt = 0; attempt < 8 && !placed; attempt++) {
           var cxp = slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24));
-          if (!overlapsSolid(cxp, GROUND_Y - 6, 5, 6)) {
+          if (spotFree(cxp, GROUND_Y - 6, 5, 6)) {
             corns.push({ x: cxp, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
             placed = true;
           }
@@ -946,7 +969,7 @@
         // Random retries can keep landing on the same bale, which silently
         // dropped ~3.6% of cobs. Sweep for the first clear spot instead.
         for (var scan = slab.x + 12; scan < usableEnd - 8 && !placed; scan += 4) {
-          if (!overlapsSolid(scan, GROUND_Y - 6, 5, 6)) {
+          if (spotFree(scan, GROUND_Y - 6, 5, 6)) {
             corns.push({ x: scan, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
             placed = true;
           }
@@ -4176,9 +4199,10 @@
       { n: runRes.bacon, draw: function () { ctx.scale(0.8, 0.8); drawBaconShape(0.9); } },
       { n: runRes.chicken, draw: function () { ctx.scale(0.72, 0.72); drawRoastShape(); } }
     ];
-    // Second row, hard left. Centring it ran the icons straight through the
-    // DEPTH readout, and the boss bar owns the middle of this row.
-    var x0 = 9, y0 = 21;
+    // Grouped with the score, directly beneath it on the right. Centring it
+    // ran the icons through the DEPTH readout, and the boss bar owns the
+    // middle of this row, so the right edge is the clear spot.
+    var x0 = W - 70, y0 = 21;
     ctx.textAlign = 'left';
     ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
     for (var i = 0; i < items.length; i++) {

@@ -519,7 +519,8 @@
     bad: '#e0392a', good: '#15702e', flash: '#ffffff',
     panelBg: 'rgba(30,26,20,0.16)', cardBg: '#f5f1e6', cardSel: '#ffe066',
     waterTop: '#5ec8e8', waterDeep: '#1f6f9e', waterSurface: '#d6f6ff',
-    corn: '#f5cb56', cornKernel: '#c48b1f', cornSilk: '#efe0a8', cornHusk: '#4a8f3f',
+    corn: '#f5cb56', cornKernel: '#c48b1f', cornSilk: '#efe0a8',
+    cornHusk: '#4f9c3a', cornHuskDark: '#40862f', cornHuskLight: '#79c455',
     feather: '#1e1e1e', featherEdge: '#55555f',
     bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
     roast: '#c9822f', roastLight: '#f0c477', roastDark: '#9c5a1e',
@@ -803,12 +804,23 @@
   // Is a pickup already sitting here? Padded so two cobs never crowd into
   // what looks like one. A slab can spawn two cobs, and without this they can
   // land on top of each other and read as a single doubled-up pickup.
-  var CORN_MIN_GAP = 4;
+  // Centre-to-centre, not edge padding. A 4px edge gap still let two 5px cobs
+  // sit 9px apart, which reads as a cluster at this scale. Cobs on the same
+  // level line now need real daylight between them; different heights (a
+  // branch above a ground cob) only need to clear vertically.
+  var CORN_MIN_SPACING = 22;
+  var CORN_ROW_TOLERANCE = 8;
   function overlapsCorn(x, y, w, h) {
+    var cx = x + w / 2, cy = y + h / 2;
     for (var i = 0; i < corns.length; i++) {
       var c = corns[i];
-      if (aabbOverlap(x - CORN_MIN_GAP, y - CORN_MIN_GAP, w + CORN_MIN_GAP * 2, h + CORN_MIN_GAP * 2,
-        c.x, c.y, c.w, c.h)) return true;
+      var ox = c.x + c.w / 2, oy = c.y + c.h / 2;
+      var sameRow = Math.abs(cy - oy) < CORN_ROW_TOLERANCE;
+      if (sameRow) {
+        if (Math.abs(cx - ox) < CORN_MIN_SPACING) return true;
+      } else if (aabbOverlap(x - 2, y - 2, w + 4, h + 4, c.x, c.y, c.w, c.h)) {
+        return true;
+      }
     }
     return false;
   }
@@ -3102,16 +3114,38 @@
   // read as corn rather than a yellow blob. Shared by the pickups, the
   // homestead's ripe crops and the market stall.
   function drawCornEar() {
-      ctx.fillStyle = COLOR.cornHusk;
+      // Green shucks: a long leaf either side peeled back past the tip, plus a
+      // shorter pair, all behind the cob so the kernels stay readable.
       [-1, 1].forEach(function (sgn) {
+        ctx.fillStyle = sgn > 0 ? COLOR.cornHusk : COLOR.cornHuskDark;
         ctx.beginPath();
-        ctx.moveTo(sgn * 0.4, 3.0);
-        ctx.quadraticCurveTo(sgn * 3.6, 1.4, sgn * 3.0, -2.6);
-        ctx.quadraticCurveTo(sgn * 1.4, 0.2, sgn * 0.4, 3.0);
+        ctx.moveTo(sgn * 0.5, 3.4);
+        ctx.quadraticCurveTo(sgn * 4.6, 1.2, sgn * 3.4, -4.2);
+        ctx.quadraticCurveTo(sgn * 1.9, -0.6, sgn * 0.5, 3.4);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = COLOR.outline;
         ctx.lineWidth = 0.4;
+        ctx.stroke();
+
+        // Shorter inner leaf, offset so the pair reads as layered.
+        ctx.fillStyle = sgn > 0 ? COLOR.cornHuskDark : COLOR.cornHusk;
+        ctx.beginPath();
+        ctx.moveTo(sgn * 0.4, 3.2);
+        ctx.quadraticCurveTo(sgn * 3.0, 1.6, sgn * 2.2, -1.8);
+        ctx.quadraticCurveTo(sgn * 1.2, 0.4, sgn * 0.4, 3.2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.35;
+        ctx.stroke();
+
+        // Rib down the long leaf.
+        ctx.strokeStyle = COLOR.cornHuskLight;
+        ctx.lineWidth = 0.4;
+        ctx.beginPath();
+        ctx.moveTo(sgn * 0.8, 2.6);
+        ctx.quadraticCurveTo(sgn * 2.9, 0.4, sgn * 3.0, -3.4);
         ctx.stroke();
       });
 
@@ -3134,6 +3168,18 @@
       ctx.fill();
       ctx.strokeStyle = COLOR.outline;
       ctx.lineWidth = 0.6;
+      ctx.stroke();
+
+      // Collar of husk wrapping the base, in front of the cob.
+      ctx.fillStyle = COLOR.cornHusk;
+      ctx.beginPath();
+      ctx.moveTo(-1.7, 1.6);
+      ctx.quadraticCurveTo(0, 3.9, 1.7, 1.6);
+      ctx.quadraticCurveTo(0, 2.6, -1.7, 1.6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 0.35;
       ctx.stroke();
 
       ctx.fillStyle = COLOR.cornKernel;

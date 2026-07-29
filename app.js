@@ -989,21 +989,33 @@
   // A persistent top-down plot, unlocked by beating the scarecrow. Tiles are
   // worked with one context-sensitive action key; crops advance a stage each
   // time a level is cleared on a run, so the two halves of the game feed each
-  // other. Saved alongside the skill tree.
+  // other. Harvested crops are carried, not auto-sold: you take them to the
+  // market stall. The farmhouse door opens the skill tree.
   var FARM_KEY = 'tah-game-farm';
+  var FARM_VERSION = 2;
   var FARM_COLS = 16, FARM_ROWS = 8, TILE = 16;
   var FARM_X0 = (320 - FARM_COLS * TILE) / 2;
-  var FARM_Y0 = 30;
+  var FARM_Y0 = 34;
   var CROP_STAGES = 3;              // seedling -> growing -> ripe
-  var CROP_VALUE = 14;              // corn per harvested crop
+  var CROP_VALUE = 14;              // corn per crop, paid at the stall
   var FARM_MOVE = 46;
 
-  // tile: { t: 'grass'|'rock'|'tree'|'soil', wet: bool, crop: -1 | 0..CROP_STAGES }
+  // Fixed structures. Their tiles can't be worked, and generation keeps them
+  // clear so you can never be walled in by a rock on the doorstep.
+  var HOUSE = { c: 1, r: 0, w: 3, h: 2, door: { c: 2, r: 1 } };
+  var MARKET = { c: 12, r: 0, w: 3, h: 2, stall: { c: 13, r: 1 } };
+
+  // tile: { t: 'grass'|'rock'|'tree'|'soil'|'built', wet, crop: -1|0..CROP_STAGES }
   var farm = null;
   var farmer = null;
+  var farmHeld = 0;
   var farmToast = '', farmToastTimer = 0;
 
   function makeFarmTile(t) { return { t: t, wet: false, crop: -1 }; }
+
+  function inRect(c, r, box) {
+    return c >= box.c && c < box.c + box.w && r >= box.r && r < box.r + box.h;
+  }
 
   function generateFarm() {
     var rng = makeRng(0xF00D);      // fixed layout so the plot feels like a place
@@ -1011,18 +1023,20 @@
     for (var r = 0; r < FARM_ROWS; r++) {
       var row = [];
       for (var c = 0; c < FARM_COLS; c++) {
+        if (inRect(c, r, HOUSE) || inRect(c, r, MARKET)) {
+          row.push(makeFarmTile('built'));
+          continue;
+        }
         var v = rng();
-        var t = 'grass';
-        if (v < 0.13) t = 'rock';
-        else if (v < 0.24) t = 'tree';
-        row.push(makeFarmTile(t));
+        row.push(makeFarmTile(v < 0.12 ? 'rock' : (v < 0.22 ? 'tree' : 'grass')));
       }
       grid.push(row);
     }
-    // Keep the entry corner clear so you never spawn inside an obstacle.
-    grid[0][0] = makeFarmTile('grass');
-    grid[0][1] = makeFarmTile('grass');
-    grid[1][0] = makeFarmTile('grass');
+    // Keep the ground in front of both doorways walkable.
+    [[HOUSE.door.c, HOUSE.door.r + 1], [MARKET.stall.c, MARKET.stall.r + 1]]
+      .forEach(function (p) {
+        if (p[1] < FARM_ROWS) grid[p[1]][p[0]] = makeFarmTile('grass');
+      });
     return grid;
   }
 
@@ -1031,19 +1045,23 @@
       var raw = localStorage.getItem(FARM_KEY);
       if (!raw) return generateFarm();
       var parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length !== FARM_ROWS) return generateFarm();
+      // Older saves predate the buildings; regenerate rather than show a plot
+      // with a house sitting on top of a boulder.
+      if (!parsed || parsed.v !== FARM_VERSION || !Array.isArray(parsed.grid)) return generateFarm();
+      if (parsed.grid.length !== FARM_ROWS) return generateFarm();
       for (var r = 0; r < FARM_ROWS; r++) {
-        if (!Array.isArray(parsed[r]) || parsed[r].length !== FARM_COLS) return generateFarm();
+        if (!Array.isArray(parsed.grid[r]) || parsed.grid[r].length !== FARM_COLS) return generateFarm();
       }
-      return parsed;
+      return parsed.grid;
     } catch (err) {
-      // Corrupt save: start a fresh plot rather than breaking the game.
       return generateFarm();
     }
   }
 
   function saveFarm() {
-    try { localStorage.setItem(FARM_KEY, JSON.stringify(farm)); } catch (err) { /* non-fatal */ }
+    try {
+      localStorage.setItem(FARM_KEY, JSON.stringify({ v: FARM_VERSION, grid: farm }));
+    } catch (err) { /* non-fatal */ }
   }
 
   // Called when a level is cleared: watered crops advance and dry out.
@@ -1065,12 +1083,16 @@
 
   function enterFarm() {
     if (!farm) farm = loadFarm();
-    farmer = { x: FARM_X0 + TILE * 0.5, y: FARM_Y0 + TILE * 0.5, facing: 1, dirX: 1, dirY: 0 };
+    farmer = {
+      x: FARM_X0 + TILE * 5.5,
+      y: FARM_Y0 + TILE * 4.5,
+      facing: 1, dirX: 0, dirY: 1
+    };
     farmToastTimer = 0;
     state = 'farm';
   }
 
-  function farmToastMsg(msg) { farmToast = msg; farmToastTimer = 1.6; }
+  function farmToastMsg(msg) { farmToast = msg; farmToastTimer = 1.8; }
 
   function facedTile() {
     var cx = farmer.x + farmer.dirX * TILE * 0.7;
@@ -1081,21 +1103,47 @@
     return { r: r, c: c, tile: farm[r][c] };
   }
 
+  function sellHeld() {
+    if (farmHeld <= 0) {
+      farmToastMsg('NOTHING TO SELL');
+      return;
+    }
+    var paid = farmHeld * CROP_VALUE;
+    meta.bankedCorn += paid;
+    saveMeta();
+    farmToastMsg('SOLD ' + farmHeld + ' FOR ' + paid + ' CORN');
+    farmHeld = 0;
+    audio.buy();
+  }
+
   // One key does the sensible thing for whatever you're facing.
   function farmAction() {
     var f = facedTile();
     if (!f) return;
     var t = f.tile;
 
+    // Buildings first - they're the two places that aren't soil.
+    if (t.t === 'built') {
+      if (f.c === MARKET.stall.c && f.r === MARKET.stall.r) { sellHeld(); return; }
+      if (f.c === HOUSE.door.c && f.r === HOUSE.door.r) {
+        treeIndex = 0;
+        svenMode = false;
+        state = 'hub';
+        return;
+      }
+      farmToastMsg(inRect(f.c, f.r, MARKET) ? 'STALL IS ROUND THE FRONT' : 'DOOR IS ROUND THE FRONT');
+      return;
+    }
+
     if (t.t === 'rock') {
       t.t = 'grass';
-      runCornAdd(2);
-      farmToastMsg('CLEARED ROCK  +2');
+      meta.bankedCorn += 2; saveMeta();
+      farmToastMsg('CLEARED ROCK  +2 CORN');
       audio.hitEnemy();
     } else if (t.t === 'tree') {
       t.t = 'grass';
-      runCornAdd(5);
-      farmToastMsg('CHOPPED TREE  +5');
+      meta.bankedCorn += 5; saveMeta();
+      farmToastMsg('CHOPPED TREE  +5 CORN');
       audio.hitEnemy();
     } else if (t.t === 'grass') {
       t.t = 'soil';
@@ -1109,11 +1157,9 @@
     } else if (t.crop >= CROP_STAGES) {
       t.crop = -1;
       t.wet = false;
-      t.t = 'soil';
-      meta.bankedCorn += CROP_VALUE;
-      saveMeta();
-      farmToastMsg('HARVESTED  +' + CROP_VALUE + ' CORN');
-      audio.buy();
+      farmHeld += 1;
+      farmToastMsg('HARVESTED  (' + farmHeld + ' TO SELL)');
+      audio.corn();
     } else if (t.crop >= 0 && !t.wet) {
       t.wet = true;
       farmToastMsg('WATERED');
@@ -1124,9 +1170,6 @@
     }
     saveFarm();
   }
-
-  // Clearing debris pays straight into the bank, same currency as everything.
-  function runCornAdd(n) { meta.bankedCorn += n; saveMeta(); }
 
   function updateFarm(dt) {
     if (farmToastTimer > 0) farmToastTimer -= dt;
@@ -1147,9 +1190,160 @@
     farmer.y = Math.max(FARM_Y0 + 2, Math.min(FARM_Y0 + FARM_ROWS * TILE - 2, farmer.y));
   }
 
-  function drawFarm() {
-    ctx.fillStyle = COLOR.skyBottom;
+  // --- farm rendering -------------------------------------------------------
+  // Reuses the side-scroller's palette and idioms (sky gradient, rolling hills,
+  // grass with a lit top edge and tufts, tile-seamed soil, black outlines) so
+  // the two halves of the game look like the same farm.
+
+  function drawFarmBackdrop() {
+    var grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, COLOR.skyTop);
+    grad.addColorStop(1, COLOR.skyBottom);
+    ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = COLOR.sun;
+    ctx.beginPath();
+    ctx.arc(W - 40, 26, 13, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = COLOR.cloud;
+    [[54, 20, 15], [232, 15, 12]].forEach(function (cl) {
+      ctx.beginPath();
+      ctx.ellipse(cl[0], cl[1], cl[2], 5, 0, 0, Math.PI * 2);
+      ctx.ellipse(cl[0] + 9, cl[1] - 3, cl[2] * 0.6, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Hills behind the plot, same silhouette treatment as the run.
+    ctx.fillStyle = COLOR.hill;
+    ctx.beginPath();
+    ctx.moveTo(0, FARM_Y0 + 6);
+    for (var x = 0; x <= W; x += 8) {
+      ctx.lineTo(x, FARM_Y0 + 6 - 9 * Math.sin(x * 0.021) - 5 * Math.sin(x * 0.052 + 1));
+    }
+    ctx.lineTo(W, H);
+    ctx.lineTo(0, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawFarmGrass(x, y) {
+    ctx.fillStyle = COLOR.grass;
+    ctx.fillRect(x, y, TILE, TILE);
+    ctx.fillStyle = COLOR.grassLight;
+    ctx.fillRect(x, y, TILE, 1.25);
+    ctx.strokeStyle = COLOR.grass;
+    ctx.lineWidth = 0.75;
+    for (var g = x + 3; g < x + TILE - 1; g += 5) {
+      var tuft = 1.4 + ((g * 7) % 3) * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(g + 0.5, y + TILE);
+      ctx.lineTo(g + 0.5 + (((g * 13) % 2) ? 0.7 : -0.7), y + TILE - tuft);
+      ctx.stroke();
+    }
+  }
+
+  function drawFarmSoil(x, y, wet) {
+    ctx.fillStyle = wet ? COLOR.soilWet : COLOR.soil;
+    ctx.fillRect(x, y, TILE, TILE);
+    ctx.strokeStyle = COLOR.soilSeam;
+    ctx.lineWidth = 1;
+    for (var fr = 1; fr < 4; fr++) {
+      ctx.beginPath();
+      ctx.moveTo(x + 1, y + fr * 4 + 0.5);
+      ctx.lineTo(x + TILE - 1, y + fr * 4 + 0.5);
+      ctx.stroke();
+    }
+  }
+
+  function drawFarmHouse() {
+    var x = FARM_X0 + HOUSE.c * TILE, y = FARM_Y0 + HOUSE.r * TILE;
+    var w = HOUSE.w * TILE, h = HOUSE.h * TILE;
+
+    ctx.fillStyle = COLOR.barnWall;
+    ctx.fillRect(x, y + 10, w, h - 10);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 10.5, w - 1, h - 11);
+
+    ctx.strokeStyle = COLOR.barnTrim;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + 2, y + 13.5);
+    ctx.lineTo(x + w - 2, y + 13.5);
+    ctx.stroke();
+
+    ctx.fillStyle = COLOR.barnRoof;
+    ctx.beginPath();
+    ctx.moveTo(x - 3, y + 11);
+    ctx.lineTo(x + w / 2, y - 2);
+    ctx.lineTo(x + w + 3, y + 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = COLOR.outline;
+    ctx.stroke();
+
+    // Door, on the front face, aligned with the interactable tile.
+    var dx = FARM_X0 + HOUSE.door.c * TILE + TILE / 2;
+    ctx.fillStyle = COLOR.barnDoor;
+    ctx.fillRect(dx - 5, y + h - 13, 10, 13);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.strokeRect(dx - 4.5, y + h - 12.5, 9, 12);
+    ctx.fillStyle = COLOR.barnTrim;
+    ctx.fillRect(dx + 2, y + h - 7, 1.4, 1.4);
+
+    ctx.fillStyle = COLOR.siloBody;
+    ctx.fillRect(x + 3, y + 14, 5, 5);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.strokeRect(x + 3.5, y + 14.5, 4, 4);
+  }
+
+  function drawFarmMarket() {
+    var x = FARM_X0 + MARKET.c * TILE, y = FARM_Y0 + MARKET.r * TILE;
+    var w = MARKET.w * TILE, h = MARKET.h * TILE;
+
+    ctx.fillStyle = COLOR.crate;
+    ctx.fillRect(x + 2, y + 12, w - 4, h - 14);
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 2.5, y + 12.5, w - 5, h - 15);
+    ctx.strokeStyle = COLOR.crateDark;
+    for (var k = x + 7; k < x + w - 4; k += 6) {
+      ctx.beginPath();
+      ctx.moveTo(k + 0.5, y + 12);
+      ctx.lineTo(k + 0.5, y + h - 2);
+      ctx.stroke();
+    }
+
+    // Striped awning, so it reads as a stall at a glance.
+    var stripes = 6, sw = (w - 4) / stripes;
+    for (var i2 = 0; i2 < stripes; i2++) {
+      ctx.fillStyle = (i2 % 2) ? COLOR.barnWall : COLOR.barnTrim;
+      ctx.fillRect(x + 2 + i2 * sw, y + 5, sw, 7);
+    }
+    ctx.strokeStyle = COLOR.outline;
+    ctx.strokeRect(x + 2.5, y + 5.5, w - 5, 6);
+
+    ctx.strokeStyle = COLOR.trunk;
+    ctx.lineWidth = 1.4;
+    [x + 4, x + w - 4].forEach(function (px) {
+      ctx.beginPath();
+      ctx.moveTo(px, y + 12);
+      ctx.lineTo(px, y + h - 1);
+      ctx.stroke();
+    });
+
+    // A cob on the counter.
+    ctx.save();
+    ctx.translate(FARM_X0 + MARKET.stall.c * TILE + TILE / 2, y + 16);
+    ctx.scale(0.9, 0.9);
+    drawCornEar();
+    ctx.restore();
+  }
+
+  function drawFarm() {
+    drawFarmBackdrop();
 
     ctx.textAlign = 'center';
     ctx.font = '9px ui-monospace, Menlo, Consolas, monospace';
@@ -1157,28 +1351,20 @@
     ctx.fillText('THE HOMESTEAD', W / 2, 13);
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.hud;
-    ctx.fillText('BANKED CORN ' + meta.bankedCorn, W / 2, 23);
+    ctx.fillText('BANKED CORN ' + meta.bankedCorn + '     CARRYING ' + farmHeld, W / 2, 23);
 
+    // Plot floor.
     for (var r = 0; r < FARM_ROWS; r++) {
       for (var c = 0; c < FARM_COLS; c++) {
         var t = farm[r][c];
         var x = FARM_X0 + c * TILE, y = FARM_Y0 + r * TILE;
 
-        ctx.fillStyle = (t.t === 'soil') ? (t.wet ? COLOR.soilWet : COLOR.soil) : COLOR.grass;
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.strokeStyle = 'rgba(42,31,24,0.16)';
+        if (t.t === 'soil') drawFarmSoil(x, y, t.wet);
+        else drawFarmGrass(x, y);
+
+        ctx.strokeStyle = 'rgba(42,31,24,0.12)';
         ctx.lineWidth = 1;
         ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
-
-        if (t.t === 'soil') {
-          ctx.strokeStyle = 'rgba(42,31,24,0.28)';
-          for (var fr = 1; fr < 4; fr++) {
-            ctx.beginPath();
-            ctx.moveTo(x + 1, y + fr * 4 + 0.5);
-            ctx.lineTo(x + TILE - 1, y + fr * 4 + 0.5);
-            ctx.stroke();
-          }
-        }
 
         if (t.t === 'rock') {
           ctx.fillStyle = COLOR.rock;
@@ -1210,33 +1396,37 @@
         }
 
         if (t.crop >= 0) {
-          var cx2 = x + TILE / 2, cy2 = y + TILE - 3;
-          var ripe = t.crop >= CROP_STAGES;
-          var hgt = 3 + t.crop * 3;
-          ctx.strokeStyle = ripe ? COLOR.cornHusk : COLOR.leaf;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.moveTo(cx2, cy2);
-          ctx.lineTo(cx2, cy2 - hgt);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx2, cy2 - hgt * 0.55);
-          ctx.lineTo(cx2 - 2.4, cy2 - hgt * 0.8);
-          ctx.moveTo(cx2, cy2 - hgt * 0.55);
-          ctx.lineTo(cx2 + 2.4, cy2 - hgt * 0.8);
-          ctx.stroke();
-          if (ripe) {
-            ctx.fillStyle = COLOR.corn;
+          var ccx = x + TILE / 2, ccy = y + TILE - 3;
+          if (t.crop >= CROP_STAGES) {
+            ctx.save();
+            ctx.translate(ccx, ccy - 5);
+            drawCornEar();
+            ctx.restore();
+          } else {
+            var hgt = 3 + t.crop * 3;
+            ctx.strokeStyle = COLOR.leaf;
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
-            ctx.ellipse(cx2, cy2 - hgt - 1.5, 2, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = COLOR.outline;
-            ctx.lineWidth = 0.5;
+            ctx.moveTo(ccx, ccy);
+            ctx.lineTo(ccx, ccy - hgt);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(ccx, ccy - hgt * 0.55);
+            ctx.lineTo(ccx - 2.4, ccy - hgt * 0.85);
+            ctx.moveTo(ccx, ccy - hgt * 0.55);
+            ctx.lineTo(ccx + 2.4, ccy - hgt * 0.85);
             ctx.stroke();
           }
         }
       }
     }
+
+    ctx.strokeStyle = COLOR.outline;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(FARM_X0 + 0.5, FARM_Y0 + 0.5, FARM_COLS * TILE - 1, FARM_ROWS * TILE - 1);
+
+    drawFarmHouse();
+    drawFarmMarket();
 
     // Highlight the tile you're about to work.
     var f = facedTile();
@@ -1246,7 +1436,7 @@
       ctx.strokeRect(FARM_X0 + f.c * TILE + 0.5, FARM_Y0 + f.r * TILE + 0.5, TILE - 1, TILE - 1);
     }
 
-    // Top-down farmer.
+    // Top-down farmer, straw hat seen from above.
     ctx.save();
     ctx.translate(farmer.x, farmer.y);
     ctx.fillStyle = COLOR.player;
@@ -1262,9 +1452,14 @@
     ctx.fill();
     ctx.strokeStyle = COLOR.outline;
     ctx.stroke();
+    ctx.strokeStyle = COLOR.forkHandle;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.arc(0, -1.4, 2.4, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.fillStyle = COLOR.skin;
     ctx.beginPath();
-    ctx.arc(farmer.dirX * 1.6, -1.4 + farmer.dirY * 1.4, 1.5, 0, Math.PI * 2);
+    ctx.arc(farmer.dirX * 1.7, -1.4 + farmer.dirY * 1.5, 1.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
@@ -1272,105 +1467,10 @@
     ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
     if (farmToastTimer > 0) {
       ctx.fillStyle = COLOR.title;
-      ctx.fillText(farmToast, W / 2, H - 14);
+      ctx.fillText(farmToast, W / 2, H - 13);
     }
     ctx.fillStyle = COLOR.dim;
-    ctx.fillText('WASD MOVE   SPACE WORK TILE   ENTER LEAVE', W / 2, H - 4);
-  }
-
-
-  // Drowning gets its own beat before the death screen: the farmer rolls
-  // flat and sinks with X eyes, the pitchfork tumbles away, the hat floats.
-  function startDrownSequence() {
-    drownSeq = {
-      t: 0,
-      x: player.x + player.w / 2,
-      y: GROUND_Y - 2,
-      angle: 0,
-      forkX: player.x + player.w / 2,
-      forkY: player.y + 2,
-      forkVx: (player.facing >= 0 ? 1 : -1) * (60 + Math.random() * 40),
-      forkVy: -135,
-      forkAngle: 0,
-      forkSpin: 15,
-      hatX: player.x + player.w / 2,
-      hatY: GROUND_Y - 3,
-      hatBob: Math.random() * 6
-    };
-    audio.womp();
-    state = 'drowning';
-  }
-
-  function updateDrownSeq(dt) {
-    var d = drownSeq;
-    if (!d) { endRun(false); return; }
-    d.t += dt;
-    d.angle = Math.min(Math.PI / 2, d.angle + dt * 2.6);
-    d.y += 10 * dt;
-    d.forkVy += 250 * dt;
-    d.forkX += d.forkVx * dt;
-    d.forkY += d.forkVy * dt;
-    d.forkAngle += d.forkSpin * dt;
-    d.hatBob += dt * 3;
-    if (d.t > 2.5) { drownSeq = null; endRun(false); }
-  }
-
-  function drawDrownSeq() {
-    var d = drownSeq;
-    if (!d) return;
-
-    ctx.save();
-    ctx.globalAlpha = Math.max(0.18, 1 - d.t / 3.2);
-    ctx.translate(d.x, d.y);
-    ctx.rotate(d.angle);
-    ctx.fillStyle = COLOR.player;
-    ctx.fillRect(-4, -2, 8, 10);
-    ctx.strokeStyle = COLOR.outline;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(-3.5, -1.5, 7, 9);
-    ctx.fillStyle = COLOR.skin;
-    ctx.beginPath();
-    ctx.arc(0, -5, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = COLOR.outline;
-    ctx.stroke();
-    ctx.strokeStyle = COLOR.outline;
-    ctx.lineWidth = 0.7;
-    [[-1.5, -5.4], [1.5, -5.4]].forEach(function (ey) {
-      ctx.beginPath();
-      ctx.moveTo(ey[0] - 0.9, ey[1] - 0.9);
-      ctx.lineTo(ey[0] + 0.9, ey[1] + 0.9);
-      ctx.moveTo(ey[0] + 0.9, ey[1] - 0.9);
-      ctx.lineTo(ey[0] - 0.9, ey[1] + 0.9);
-      ctx.stroke();
-    });
-    ctx.restore();
-
-    ctx.save();
-    ctx.translate(d.forkX, d.forkY);
-    ctx.rotate(d.forkAngle);
-    drawPitchfork(-5, 0, 0, 12);
-    ctx.restore();
-
-    var hy = d.hatY + Math.sin(d.hatBob) * 0.9;
-    ctx.save();
-    ctx.translate(d.hatX, hy);
-    ctx.fillStyle = COLOR.straw;
-    ctx.beginPath();
-    ctx.moveTo(-3, 0);
-    ctx.lineTo(-2.2, -3.6);
-    ctx.lineTo(2.2, -3.6);
-    ctx.lineTo(3, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = COLOR.outline;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 6, 1.8, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
+    ctx.fillText('WASD MOVE   SPACE WORK/SELL/ENTER   ENTER LEAVE', W / 2, H - 4);
   }
 
   // ---------------------------------------------------------------- input --
@@ -2594,12 +2694,18 @@
         continue;
       }
 
-      // An ear of corn: tapered cob with staggered rows of kernels and husk
-      // leaves peeling back. The kernel rows are what actually make it read
-      // as corn rather than a yellow blob.
       ctx.save();
       ctx.translate(cx, cy);
+      drawCornEar();
+      ctx.restore();
+    }
+  }
 
+  // An ear of corn centred on the origin: tapered cob with staggered rows of
+  // kernels and husk leaves peeling back. The kernel rows are what make it
+  // read as corn rather than a yellow blob. Shared by the pickups, the
+  // homestead's ripe crops and the market stall.
+  function drawCornEar() {
       ctx.fillStyle = COLOR.cornHusk;
       [-1, 1].forEach(function (sgn) {
         ctx.beginPath();
@@ -2647,9 +2753,6 @@
           ctx.fill();
         }
       }
-
-      ctx.restore();
-    }
   }
 
   function drawPitchfork(px, py, angle, len) {

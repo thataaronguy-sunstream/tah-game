@@ -756,6 +756,16 @@
   // post-hoc validation.
   // Any two ground slabs that touch exactly become a single rectangle, so no
   // interior edges get outlined. Thin platforms are left untouched.
+  // Does this rect intersect any solid obstacle already placed?
+  function overlapsSolid(x, y, w, h) {
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p.solid) continue;
+      if (aabbOverlap(x, y, w, h, p.x, p.y, p.w, p.h)) return true;
+    }
+    return false;
+  }
+
   function mergeFlushGround() {
     var ground = [], others = [];
     for (var i = 0; i < platforms.length; i++) {
@@ -877,12 +887,26 @@
         }
       }
 
+      // Bales are solid, so a cob dropped inside one would be sealed in.
+      // Retry a few placements, and skip rather than bury it.
       var cornOnSlab = 1 + (rng() < 0.4 ? 1 : 0);
       for (var c = 0; c < cornOnSlab; c++) {
-        corns.push({
-          x: slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24)),
-          y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn'
-        });
+        var placed = false;
+        for (var attempt = 0; attempt < 8 && !placed; attempt++) {
+          var cxp = slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24));
+          if (!overlapsSolid(cxp, GROUND_Y - 6, 5, 6)) {
+            corns.push({ x: cxp, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
+            placed = true;
+          }
+        }
+        // Random retries can keep landing on the same bale, which silently
+        // dropped ~3.6% of cobs. Sweep for the first clear spot instead.
+        for (var scan = slab.x + 12; scan < usableEnd - 8 && !placed; scan += 4) {
+          if (!overlapsSolid(scan, GROUND_Y - 6, 5, 6)) {
+            corns.push({ x: scan, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
+            placed = true;
+          }
+        }
       }
 
       if (isTail && hasBoss) continue;
@@ -2064,6 +2088,15 @@
     var boxY = player.y - 6, boxW = reach, boxH = player.h + 14;
     var px = player.x + player.w / 2, py = player.y + player.h / 2;
 
+    // Anything edible in the arc comes to you - a cob wedged against a bale
+    // is otherwise unreachable now that bales are solid.
+    for (var ci = 0; ci < corns.length; ci++) {
+      var cc = corns[ci];
+      if (cc.collected) continue;
+      if (!aabbOverlap(boxX, boxY, boxW, boxH, cc.x, cc.y, cc.w, cc.h)) continue;
+      if (collectCorn(cc)) return;
+    }
+
     for (var i = 0; i < drops.length; i++) {
       var d = drops[i];
       if (d.hooked) continue;
@@ -2080,21 +2113,28 @@
     }
   }
 
+  // Returns true if picking this up opened the upgrade screen, so callers can
+  // stop iterating.
+  function collectCorn(c) {
+    c.collected = true;
+    var isApple = c.kind === 'apple';
+    runCorn += isApple ? APPLE_CORN : mods.cornValue;
+    addScore(isApple ? APPLE_SCORE : SCORE_CORN);
+    cornSinceUpgrade += 1;
+    audio.corn();
+    if (cornSinceUpgrade >= CORN_PER_UPGRADE) {
+      cornSinceUpgrade = 0;
+      if (offerUpgrade()) return true;
+    }
+    return false;
+  }
+
   function checkCorn() {
     for (var i = 0; i < corns.length; i++) {
       var c = corns[i];
       if (c.collected) continue;
       if (!aabbOverlap(player.x, player.y, player.w, player.h, c.x, c.y, c.w, c.h)) continue;
-      c.collected = true;
-      var isApple = c.kind === 'apple';
-      runCorn += isApple ? APPLE_CORN : mods.cornValue;
-      addScore(isApple ? APPLE_SCORE : SCORE_CORN);
-      cornSinceUpgrade += 1;
-      audio.corn();
-      if (cornSinceUpgrade >= CORN_PER_UPGRADE) {
-        cornSinceUpgrade = 0;
-        if (offerUpgrade()) return;
-      }
+      if (collectCorn(c)) return;
     }
   }
 

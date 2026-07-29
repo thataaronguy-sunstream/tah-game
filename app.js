@@ -521,6 +521,7 @@
     waterTop: '#5ec8e8', waterDeep: '#1f6f9e', waterSurface: '#d6f6ff',
     corn: '#f5cb56', cornKernel: '#c48b1f', cornSilk: '#efe0a8',
     cornHusk: '#4f9c3a', cornHuskDark: '#40862f', cornHuskLight: '#79c455',
+    stalk: '#5c9e35', stalkDark: '#3d7522', stalkLeaf: '#63ad3c', stalkLeafDark: '#4a8c2c',
     feather: '#1e1e1e', featherEdge: '#55555f',
     bacon: '#b8492f', baconFat: '#f7dcc4', baconStripe: '#7d2a1c', straw: '#e0c15a',
     roast: '#c9822f', roastLight: '#f0c477', roastDark: '#9c5a1e',
@@ -721,6 +722,7 @@
   var corns = [];
   var platforms = [];
   var trees = [];
+  var stalks = [];
   var waters = [];
   var levelWidth = 900;
   var exitX = 0;
@@ -839,6 +841,18 @@
     return false;
   }
 
+  // Plants a stalk at x if there's room, and hangs its cob off it. The cob is
+  // the pickup; the stalk is scenery drawn behind it.
+  var STALK_COB_Y = GROUND_Y - 15;
+  function plantStalk(x, rng) {
+    if (overlapsSolid(x - 2, GROUND_Y - 26, 10, 26)) return false;
+    if (overlapsCorn(x, STALK_COB_Y, 5, 6)) return false;
+    var lean = (rng() - 0.5) * 0.24;
+    stalks.push({ x: x + 2.5, h: 22 + Math.round(rng() * 6), lean: lean });
+    corns.push({ x: x, y: STALK_COB_Y, w: 5, h: 6, collected: false, kind: 'corn' });
+    return true;
+  }
+
   function mergeFlushGround() {
     var ground = [], others = [];
     for (var i = 0; i < platforms.length; i++) {
@@ -863,6 +877,7 @@
     var rng = makeRng(runSeed + depth * 7919);
     platforms = [];
     trees = [];
+    stalks = [];
     waters = [];
     corns = [];
     enemies = [];
@@ -935,12 +950,8 @@
           var bw = BRANCH_W_MIN + Math.round(rng() * (BRANCH_W_MAX - BRANCH_W_MIN));
           var bx = side > 0 ? trunkX + 2 : trunkX - 2 - bw;
           bx = Math.max(slab.x, Math.min(decorLimit - bw, bx));
+          // Branches carry no cobs: corn grows on stalks, apples grow on trees.
           platforms.push({ x: bx, y: by, w: bw, h: 5, branch: true, side: side, trunkX: trunkX });
-          if (!bearsApple && ti > 0 && rng() < 0.4) {
-            if (spotFree(bx + bw / 2 - 2.5, by - 8, 5, 6)) {
-              corns.push({ x: bx + bw / 2 - 2.5, y: by - 8, w: 5, h: 6, collected: false, kind: 'corn' });
-            }
-          }
         }
 
         if (bearsApple) {
@@ -965,32 +976,23 @@
         // also can't end up flush.
         if (overlapsSolid(haX - 6, GROUND_Y - BALE_H, haW + 12, BALE_H)) continue;
         platforms.push({ x: haX, y: GROUND_Y - BALE_H, w: haW, h: BALE_H, bale: true, solid: true });
-        if (rng() < 0.35) {
-          if (spotFree(haX + haW / 2 - 2.5, GROUND_Y - BALE_H - 9, 5, 6)) {
-            corns.push({ x: haX + haW / 2 - 2.5, y: GROUND_Y - BALE_H - 9, w: 5, h: 6, collected: false, kind: 'corn' });
-          }
-        }
       }
 
-      // Bales are solid, so a cob dropped inside one would be sealed in.
-      // Retry a few placements, and skip rather than bury it.
-      var cornOnSlab = 1 + (rng() < 0.4 ? 1 : 0);
-      for (var c = 0; c < cornOnSlab; c++) {
-        var placed = false;
-        for (var attempt = 0; attempt < 8 && !placed; attempt++) {
-          var cxp = slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24));
-          if (spotFree(cxp, GROUND_Y - 6, 5, 6)) {
-            corns.push({ x: cxp, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
-            placed = true;
-          }
+      // Corn grows on stalks. A few per slab, each bearing one cob at about
+      // chest height so you collect it by walking through rather than jumping.
+      // Tuned to land on the same corn supply as the old loose-cob scatter -
+      // stalks replace it rather than adding to it, or the score-gated
+      // upgrade cards speed back up.
+      var stalkCount = 1 + (rng() < 0.8 ? 1 : 0);
+      for (var st = 0; st < stalkCount; st++) {
+        var placedStalk = false;
+        for (var sa = 0; sa < 10 && !placedStalk; sa++) {
+          var sxp = slab.x + 12 + Math.round(rng() * Math.max(1, usableW - 24));
+          if (plantStalk(sxp, rng)) placedStalk = true;
         }
-        // Random retries can keep landing on the same bale, which silently
-        // dropped ~3.6% of cobs. Sweep for the first clear spot instead.
-        for (var scan = slab.x + 12; scan < usableEnd - 8 && !placed; scan += 4) {
-          if (spotFree(scan, GROUND_Y - 6, 5, 6)) {
-            corns.push({ x: scan, y: GROUND_Y - 6, w: 5, h: 6, collected: false, kind: 'corn' });
-            placed = true;
-          }
+        // Deterministic fallback so a crowded slab still gets its stalks.
+        for (var scan = slab.x + 12; scan < usableEnd - 10 && !placedStalk; scan += 5) {
+          if (plantStalk(scan, rng)) placedStalk = true;
         }
       }
 
@@ -2949,6 +2951,61 @@
     }
   }
 
+
+  // Corn stalks: a leaning stem with drooping blade leaves and a tassel on
+  // top. Drawn behind the pickups so the cob reads clearly against it.
+  function drawStalks() {
+    for (var i = 0; i < stalks.length; i++) {
+      var st = stalks[i];
+      var sway = Math.sin(time * 1.4 + st.x * 0.3) * 0.8;
+      var topX = st.x + st.lean * st.h + sway;
+      var topY = GROUND_Y - st.h;
+
+      // Stem.
+      ctx.strokeStyle = COLOR.stalk;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(st.x, GROUND_Y);
+      ctx.quadraticCurveTo(st.x + st.lean * st.h * 0.4, GROUND_Y - st.h * 0.55, topX, topY);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.stalkDark;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(st.x + 0.5, GROUND_Y - 2);
+      ctx.quadraticCurveTo(st.x + st.lean * st.h * 0.4 + 0.5, GROUND_Y - st.h * 0.55, topX + 0.4, topY + 2);
+      ctx.stroke();
+
+      // Blade leaves arcing off alternating sides.
+      for (var lf = 0; lf < 4; lf++) {
+        var t = 0.22 + lf * 0.2;
+        var ly = GROUND_Y - st.h * t;
+        var lx = st.x + st.lean * st.h * t * 0.6;
+        var dir = lf % 2 === 0 ? 1 : -1;
+        var len = 7 - lf * 0.9;
+        ctx.fillStyle = lf % 2 === 0 ? COLOR.stalkLeaf : COLOR.stalkLeafDark;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly + 1.2);
+        ctx.quadraticCurveTo(lx + dir * len * 0.7, ly - 2.4, lx + dir * len, ly + 1.6);
+        ctx.quadraticCurveTo(lx + dir * len * 0.6, ly + 0.9, lx, ly + 1.2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = COLOR.outline;
+        ctx.lineWidth = 0.3;
+        ctx.stroke();
+      }
+
+      // Tassel.
+      ctx.strokeStyle = COLOR.cornSilk;
+      ctx.lineWidth = 0.6;
+      for (var ts = -1; ts <= 1; ts++) {
+        ctx.beginPath();
+        ctx.moveTo(topX, topY + 1);
+        ctx.quadraticCurveTo(topX + ts * 1.6, topY - 2, topX + ts * 2.4, topY - 3.6);
+        ctx.stroke();
+      }
+    }
+  }
+
   function drawTrees() {
     for (var i = 0; i < trees.length; i++) {
       var t = trees[i];
@@ -4545,6 +4602,7 @@
       ctx.translate(-cameraX, 0);
       drawWater();
       drawTrees();
+      drawStalks();
       drawPlatforms();
       drawExit();
       drawCorn();

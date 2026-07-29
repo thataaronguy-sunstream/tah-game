@@ -842,14 +842,34 @@
   }
 
   // Plants a stalk at x if there's room, and hangs its cob off it. The cob is
-  // the pickup; the stalk is scenery drawn behind it.
-  var STALK_COB_Y = GROUND_Y - 15;
+  // the pickup; the stalk is scenery drawn behind it. The cob picks a side, a
+  // height and a tilt so no two stalks look stamped from the same die.
+  // Heights stay between 10 and 18 above the ground, which keeps every cob
+  // inside a standing player's body so it's always a walk-through pickup.
+  var STALK_COB_MIN = 10, STALK_COB_MAX = 18;
   function plantStalk(x, rng) {
-    if (overlapsSolid(x - 2, GROUND_Y - 26, 10, 26)) return false;
-    if (overlapsCorn(x, STALK_COB_Y, 5, 6)) return false;
-    var lean = (rng() - 0.5) * 0.24;
-    stalks.push({ x: x + 2.5, h: 22 + Math.round(rng() * 6), lean: lean });
-    corns.push({ x: x, y: STALK_COB_Y, w: 5, h: 6, collected: false, kind: 'corn' });
+    if (overlapsSolid(x - 4, GROUND_Y - 28, 14, 28)) return false;
+
+    var side = rng() < 0.5 ? -1 : 1;
+    var lift = STALK_COB_MIN + Math.round(rng() * (STALK_COB_MAX - STALK_COB_MIN));
+    var cobX = x + side * 3;
+    var cobY = GROUND_Y - lift;
+    if (overlapsCorn(cobX, cobY, 5, 6)) return false;
+
+    var stemX = x + 2.5;
+    stalks.push({
+      x: stemX,
+      h: 22 + Math.round(rng() * 8),
+      lean: (rng() - 0.5) * 0.24,
+      // Where the shank leaves the stem to meet the cob.
+      shankY: cobY + 3,
+      side: side
+    });
+    corns.push({
+      x: cobX, y: cobY, w: 5, h: 6, collected: false, kind: 'corn',
+      // Tilted away from the stem, angled more the further it leans out.
+      angle: side * (0.3 + rng() * 0.45)
+    });
     return true;
   }
 
@@ -2975,6 +2995,23 @@
       ctx.quadraticCurveTo(st.x + st.lean * st.h * 0.4 + 0.5, GROUND_Y - st.h * 0.55, topX + 0.4, topY + 2);
       ctx.stroke();
 
+      // Shank: the short stub that carries the cob out to whichever side it
+      // was planted on. Without it a tilted cob floats beside the stem.
+      if (st.side) {
+        var kt = Math.max(0, Math.min(1, (GROUND_Y - st.shankY) / st.h));
+        var iv = 1 - kt;
+        var kx = iv * iv * st.x
+               + 2 * iv * kt * (st.x + st.lean * st.h * 0.4)
+               + kt * kt * topX;
+        ctx.strokeStyle = COLOR.stalkLeaf;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(kx, st.shankY + 1.5);
+        ctx.quadraticCurveTo(kx + st.side * 1.6, st.shankY + 0.2,
+                             kx + st.side * 3, st.shankY);
+        ctx.stroke();
+      }
+
       // Blade leaves arcing off alternating sides.
       for (var lf = 0; lf < 4; lf++) {
         var t = 0.22 + lf * 0.2;
@@ -3155,6 +3192,9 @@
 
       ctx.save();
       ctx.translate(cx, cy);
+      // Cobs on stalks carry a tilt so the row doesn't read as fenceposts.
+      // Loose cobs on the ground have no angle and draw upright.
+      if (c.angle) ctx.rotate(c.angle);
       drawCornEar();
       ctx.restore();
     }
@@ -4337,8 +4377,13 @@
     ctx.fillText(BOSS_NAMES[boss.type] || 'BOSS', W / 2, y - 3);
     ctx.fillStyle = COLOR.hpEmpty;
     ctx.fillRect(x, y, barW, barH);
+    // Measure against this boss's own max, not the scarecrow's. Every boss
+    // past the first has more health, so dividing by 12 ran the fill straight
+    // past the end of the bar. Clamped as well, so a bad max can't overflow.
+    var bossMax = boss.maxHp || ENEMY_DEFS[boss.type].hp;
+    var frac = Math.max(0, Math.min(1, boss.hp / bossMax));
     ctx.fillStyle = COLOR.bad;
-    ctx.fillRect(x, y, barW * Math.max(0, boss.hp / ENEMY_DEFS.scarecrow.hp), barH);
+    ctx.fillRect(x, y, barW * frac, barH);
     ctx.strokeStyle = COLOR.outline;
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, barW - 1, barH - 1);

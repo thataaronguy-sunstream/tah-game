@@ -728,6 +728,28 @@
   // Generates a left-to-right chain of ground slabs separated by jumpable
   // gaps, so every level is traversable by construction rather than by
   // post-hoc validation.
+  // Any two ground slabs that touch exactly become a single rectangle, so no
+  // interior edges get outlined. Thin platforms are left untouched.
+  function mergeFlushGround() {
+    var ground = [], others = [];
+    for (var i = 0; i < platforms.length; i++) {
+      (platforms[i].h > 10 ? ground : others).push(platforms[i]);
+    }
+    ground.sort(function (a, b) { return a.x - b.x; });
+
+    var merged = [];
+    for (var g = 0; g < ground.length; g++) {
+      var prev = merged[merged.length - 1];
+      var cur = ground[g];
+      if (prev && prev.y === cur.y && Math.abs((prev.x + prev.w) - cur.x) < 0.5) {
+        prev.w += cur.w;
+      } else {
+        merged.push({ x: cur.x, y: cur.y, w: cur.w, h: cur.h });
+      }
+    }
+    platforms = merged.concat(others);
+  }
+
   function generateLevel() {
     var rng = makeRng(runSeed + depth * 7919);
     platforms = [];
@@ -767,6 +789,11 @@
     slabs.push({ x: cursor, w: tailW });
     platforms.push({ x: cursor, y: GROUND_Y, w: tailW, h: H - GROUND_Y });
     cursor += tailW;
+
+    // The loop adds no gap after its last slab, so the tail butts straight up
+    // against it. Two flush slabs each stroke their own outline, which drew a
+    // dark seam through the ground near the exit - merge them into one.
+    mergeFlushGround();
 
     levelWidth = cursor;
     exitX = levelWidth - (hasBoss ? 80 : 44);

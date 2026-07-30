@@ -452,6 +452,26 @@
   var PLAYER_HIT_INVULN = 0.8;
   var STOMP_GRACE = 0.3;
 
+  // Knockback needs its own timer on both sides. Setting vx alone did nothing:
+  // the player's vx is rewritten from the movement keys every frame, and each
+  // enemy's chase logic reassigns vx too, so a hit was erased before it ever
+  // drew. While the timer runs, that steering is suspended and the impulse
+  // actually carries.
+  var KNOCKBACK_TIME = 0.2, KNOCKBACK_DRAG = 5;
+  var KNOCKBACK_VX = 120, KNOCKBACK_VY = -58;
+  var PLAYER_KNOCKBACK_TIME = 0.22;
+  var PLAYER_KNOCKBACK_VX = 95, PLAYER_KNOCKBACK_VY = -70;
+  // Heavies barely budge. Being able to shove a boss around the arena with a
+  // pitchfork would defuse the fight it took five levels to reach; the oak is
+  // a rooted tree and does not move at all.
+  var KNOCKBACK_RESIST = {
+    scarecrow: 0.5, bull: 0.35, rustbucket: 0.35, queen: 0.45, oak: 0
+  };
+  // Bosses get the impulse but recover fast. Their knockback has to stay well
+  // under the attack cooldown (0.26s) or a fast swinger could hold a boss in
+  // permanent flinch and never face an attack.
+  var BOSS_KNOCKBACK_TIME = 0.08;
+
   var GROUND_Y = 164;
   // A boss every five levels rather than a single hard stop. Beating one lets
   // you bank out or push deeper with your upgrades intact.
@@ -715,6 +735,13 @@
   var runUpgrades = {};
   var mods = null;
 
+  // Snapshot taken on entering a stage, so a pit fall can roll the stage's
+  // takings back when it puts you on the start line again.
+  var stageEntryScore = 0;
+  var stageEntryRes = { corn: 0, bacon: 0, chicken: 0 };
+  var stageEntryUpgradeScore = UPGRADE_SCORE_FIRST;
+  var pitFallTimer = 0;
+
   var player = null;
   var enemies = [];
   var particles = [];
@@ -761,7 +788,7 @@
       hp: mods.maxHp, hitInvuln: 0,
       attackTimer: 0, attackCooldown: 0, comboStep: 0, comboResetTimer: 0, hitThisSwing: {},
       rolling: 0, rollCooldown: 0, fellOut: false, airJumpsLeft: 0, jumpCut: true,
-      stompGrace: 0,
+      stompGrace: 0, knockback: 0,
       dropThrough: 0, swimming: false, drownTimer: PLAYER_DROWN_TIME
     };
   }
@@ -772,7 +799,7 @@
     enemyIdCounter++;
     return {
       id: enemyIdCounter, type: type, x: x, y: y, w: def.w, h: def.h,
-      vx: 0, vy: 0, facing: -1, hp: def.hp, hitFlash: 0,
+      vx: 0, vy: 0, facing: -1, hp: def.hp, hitFlash: 0, knockback: 0,
       spawnX: x, spawnY: y, patrolDir: 0, pauseTimer: 0,
       phase: Math.random() * 10, onGround: false, fellOut: false, dead: false,
       perchX: x, perchY: y, mode: 'perch', modeTimer: 0
@@ -1102,6 +1129,8 @@
     generateLevel();
     player = makePlayer();
     cameraX = 0;
+    pitFallTimer = 0;
+    snapshotStageEntry();
 
     if (nodeLevel('headstart')) {
       var pool = availableUpgrades();
@@ -1115,15 +1144,20 @@
     state = 'playing';
   }
 
-  function nextLevel() {
-    // A cleared field is a day's work: watered crops back home move on a stage.
-    advanceCrops();
-    depth += 1;
-    if (depth > meta.bestDepth) { meta.bestDepth = depth; saveMeta(); }
+  function snapshotStageEntry() {
+    stageEntryScore = runScore;
+    stageEntryRes = { corn: runRes.corn, bacon: runRes.bacon, chicken: runRes.chicken };
+    stageEntryUpgradeScore = nextUpgradeScore;
+  }
 
+  // Build the level for the current depth and put the farmer on its start line.
+  // Shared by advancing a level and by restarting one after a pit fall, so the
+  // two can't drift apart on which fields they remember to reset.
+  function spawnIntoLevel() {
     // Dismount explicitly rather than via setForm(): clearing combineActive
     // first would make setForm's no-op guard skip the resize, stranding the
     // farmer with the combine's short, wide hitbox.
+    snapshotStageEntry();
     combineActive = false;
     player.w = PLAYER_W;
     player.h = PLAYER_H;
@@ -1136,9 +1170,38 @@
     player.hitInvuln = PLAYER_HIT_INVULN;
     player.jumpCut = true;
     player.stompGrace = 0;
+    player.knockback = 0;
     player.slamArmed = false;
+    // Belt and braces. updateGrounded recomputes this from the y position every
+    // frame, so respawning on the start line clears it anyway; it is reset here
+    // so the pit check can never see a stale true if that ever stops being true.
+    player.fellOut = false;
+    player.swimming = false;
+    player.drownTimer = PLAYER_DROWN_TIME;
     slamFx = 0;
     state = 'playing';
+  }
+
+  // Falling into a pit costs a heart and puts you back at the start of the same
+  // stage. The layout is seeded on depth, so regenerating rebuilds the field you
+  // just fell out of rather than a new one.
+  function restartStage() {
+    // The stage's pickups and kills come back with it, so its score and
+    // resources are rolled back too. Otherwise a deliberate dive would let you
+    // harvest the same field twice over for the price of one heart.
+    runScore = stageEntryScore;
+    runRes = { corn: stageEntryRes.corn, bacon: stageEntryRes.bacon, chicken: stageEntryRes.chicken };
+    nextUpgradeScore = stageEntryUpgradeScore;
+    pitFallTimer = 1.4;
+    spawnIntoLevel();
+  }
+
+  function nextLevel() {
+    // A cleared field is a day's work: watered crops back home move on a stage.
+    advanceCrops();
+    depth += 1;
+    if (depth > meta.bestDepth) { meta.bestDepth = depth; saveMeta(); }
+    spawnIntoLevel();
   }
 
   function endRun(victorious) {
@@ -1670,7 +1733,7 @@
 
   // ---------------------------------------------------------------- input --
   var keys = {};
-  var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'Space', 'ShiftLeft', 'ShiftRight',
+  var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'ShiftLeft', 'ShiftRight',
     'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Enter', 'Escape'];
   var jumpQueued = false, attackQueued = false, rollQueued = false, formQueued = false;
   var dropQueued = false;
@@ -1685,9 +1748,9 @@
     // key on menus and in the homestead, so queueing it anywhere else left a
     // jump buffered that fired the instant a run started.
     if (state === 'playing') {
-      if (e.code === 'Space') jumpQueued = true;
+      if (e.code === 'KeyW') jumpQueued = true;
       if (e.code === 'KeyS') dropQueued = true;
-      if (e.code === 'KeyJ') attackQueued = true;
+      if (e.code === 'Space') attackQueued = true;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') rollQueued = true;
       if (e.code === 'KeyF') formQueued = true;
     }
@@ -1798,6 +1861,20 @@
     }
   }
 
+  // dir is the direction to send it: +1 right, -1 left.
+  function applyKnockback(e, dir, mult) {
+    var resist = KNOCKBACK_RESIST[e.type];
+    var scale = (resist === undefined ? 1 : resist) * (mult === undefined ? 1 : mult);
+    if (scale <= 0) return;
+    e.vx = dir * KNOCKBACK_VX * scale;
+    e.vy = KNOCKBACK_VY * scale;
+    // Only the velocity carries the resist. Scaling the duration by it too meant
+    // a heavy enemy was penalised twice and shifted a fraction of a pixel, so
+    // the hit landed with no visible flinch at all.
+    e.knockback = isBoss(e) ? BOSS_KNOCKBACK_TIME
+                            : KNOCKBACK_TIME * (mult === undefined ? 1 : mult);
+  }
+
   function updateGrounded(e, dt, plats, skipThin) {
     var prevBottom = e.y + e.h;
     var prevX = e.x;
@@ -1855,8 +1932,8 @@
       if (Math.hypot(dx, dy) > SLAM_RADIUS) continue;
       e.hp -= SLAM_DAMAGE;
       e.hitFlash = 0.16;
-      e.vx = (dx >= 0 ? 1 : -1) * 90;
-      e.vy = -70;
+      // The slam is the heaviest hit in the game, so it throws hardest.
+      applyKnockback(e, dx >= 0 ? 1 : -1, 1.4);
       if (e.hp <= 0) killEnemy(e);
     }
   }
@@ -1889,6 +1966,14 @@
     if (player.rolling > 0) {
       player.rolling -= dt;
       player.vx = player.facing * DODGE_SPEED;
+    } else if (player.knockback > 0) {
+      // Movement input is suspended so the hit actually shifts you. Without
+      // this the next frame's vx assignment wiped the impulse and taking a hit
+      // read as nothing but a flash.
+      player.knockback -= dt;
+      player.vx *= Math.max(0, 1 - KNOCKBACK_DRAG * dt);
+      if (keys.KeyA) player.facing = -1;
+      if (keys.KeyD) player.facing = 1;
     } else {
       var move = 0;
       if (keys.KeyA) { move -= 1; player.facing = -1; }
@@ -1928,7 +2013,7 @@
     jumpQueued = false;
 
     // Cut the ascent once per jump, on the frame the key comes up.
-    if (!player.jumpCut && player.vy < 0 && !keys.Space) {
+    if (!player.jumpCut && player.vy < 0 && !keys.KeyW) {
       player.vy *= JUMP_CUT_MULT;
       player.jumpCut = true;
     }
@@ -1981,7 +2066,20 @@
       player.drownTimer = PLAYER_DROWN_TIME;
     }
 
-    if (player.fellOut) player.hp = 0;
+    // A pit costs a heart and sends you back to the stage's start line rather
+    // than ending the run outright. Run out of hearts down there and that is
+    // the run.
+    if (player.fellOut) {
+      player.hp -= 1;
+      if (player.hp <= 0) {
+        audio.playerDeath();
+        endRun(false);
+        return;
+      }
+      audio.hitPlayer();
+      restartStage();
+      return;
+    }
 
     if (player.hp <= 0) {
       audio.playerDeath();
@@ -2230,8 +2328,7 @@
         }
 
         e.hp -= 1;
-        e.vx = player.facing * 60;
-        e.vy = -40;
+        applyKnockback(e, player.facing);
         e.hitFlash = 0.12;
         audio.hitEnemy();
         if (e.hp <= 0) killEnemy(e);
@@ -2348,6 +2445,8 @@
         (player.y + player.h) < e.y + e.h * 0.85) {
         e.hp -= 1;
         e.hitFlash = 0.12;
+        // A stomp shoves it aside as well as down, away from where you land.
+        applyKnockback(e, (e.x + e.w / 2) < (player.x + player.w / 2) ? -1 : 1, 0.7);
         player.vy = JUMP_VELOCITY * 0.62;
         player.jumpCut = true;
         // The bounce leaves you still overlapping but now moving upward, which
@@ -2363,8 +2462,9 @@
       player.hp -= 1;
       player.hitInvuln = PLAYER_HIT_INVULN;
       if (!combineActive) {
-        player.vx = (player.x < e.x ? -1 : 1) * 70;
-        player.vy = -60;
+        player.vx = (player.x < e.x ? -1 : 1) * PLAYER_KNOCKBACK_VX;
+        player.vy = PLAYER_KNOCKBACK_VY;
+        player.knockback = PLAYER_KNOCKBACK_TIME;
       }
       audio.hitPlayer();
       if (e.type === 'boar') e.pauseTimer = 0.5;
@@ -2376,6 +2476,27 @@
     var def = ENEMY_DEFS[e.type];
     var plats = platforms;
     if (e.hitFlash > 0) e.hitFlash -= dt;
+
+    // Knockback pre-empts the AI entirely. Routing every type through one gate
+    // here rather than teaching each chase branch to respect it means a new
+    // enemy can't quietly ship without knockback working.
+    if (e.knockback > 0) {
+      e.knockback -= dt;
+      e.vx *= Math.max(0, 1 - KNOCKBACK_DRAG * dt);
+      var flier = e.type === 'crow' || e.type === 'fly' ||
+                  e.type === 'vulture' || e.type === 'queen';
+      if (flier) {
+        // Fliers coast instead of falling, so a struck crow is batted back
+        // through the air rather than dropping like a stone.
+        e.vy *= Math.max(0, 1 - KNOCKBACK_DRAG * dt);
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        e.x = Math.max(0, Math.min(levelWidth - e.w, e.x));
+      } else {
+        updateGrounded(e, dt, plats);
+      }
+      return;
+    }
 
     if (e.type === 'boar') {
       // A boar that goes in the water stays in: it paddles at the surface,
@@ -2768,6 +2889,7 @@
     }
 
     if (barnBlockedMsgTimer > 0) barnBlockedMsgTimer -= dt;
+    if (pitFallTimer > 0) pitFallTimer -= dt;
     if (slamFx > 0) slamFx -= dt;
 
     updatePlayer(dt);
@@ -2829,6 +2951,15 @@
     ctx.fill();
   }
 
+  // Ripple entirely below the bank. Centring the sine on GROUND_Y put the
+  // crests above the adjacent ground, so the stream looked like it was standing
+  // proud of its own banks. Offset by the amplitude plus half the stroke width
+  // so even the topmost pixel stays under the surface line.
+  var WATER_AMP = 1.1;
+  function waterSurfaceY(x) {
+    return GROUND_Y + WATER_AMP + 0.6 + Math.sin((x + time * 40) * 0.4) * WATER_AMP;
+  }
+
   function drawWater() {
     for (var i = 0; i < waters.length; i++) {
       var wtr = waters[i];
@@ -2836,19 +2967,27 @@
       var grad = ctx.createLinearGradient(0, y, 0, H);
       grad.addColorStop(0, COLOR.waterTop);
       grad.addColorStop(1, COLOR.waterDeep);
-      ctx.fillStyle = grad;
-      ctx.fillRect(wtr.x, y, wtr.w, H - y);
 
-      // Ripple entirely below the bank. Centring the sine on GROUND_Y put the
-      // crests above the adjacent ground, so the stream looked like it was
-      // standing proud of its own banks. Offset by the amplitude plus half the
-      // stroke width so even the topmost pixel stays under the surface line.
-      var amp = 1.1;
+      // Fill down from the wave itself, not from the bank. Filling the whole
+      // rect from GROUND_Y left a blue band standing above the crest, which
+      // read as the water sitting on top of its own surface line.
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(wtr.x, waterSurfaceY(wtr.x));
+      for (var fx = wtr.x; fx <= wtr.x + wtr.w; fx += 2) {
+        ctx.lineTo(fx, waterSurfaceY(fx));
+      }
+      ctx.lineTo(wtr.x + wtr.w, waterSurfaceY(wtr.x + wtr.w));
+      ctx.lineTo(wtr.x + wtr.w, H);
+      ctx.lineTo(wtr.x, H);
+      ctx.closePath();
+      ctx.fill();
+
       ctx.strokeStyle = COLOR.waterSurface;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (var x = wtr.x; x <= wtr.x + wtr.w; x += 2) {
-        var wy = y + amp + 0.6 + Math.sin((x + time * 40) * 0.4) * amp;
+        var wy = waterSurfaceY(x);
         if (x === wtr.x) ctx.moveTo(x, wy);
         else ctx.lineTo(x, wy);
       }
@@ -4472,6 +4611,15 @@
       ctx.fillText('DEFEAT THE SCARECROW FIRST', W / 2, H - 6);
     }
 
+    // Without this, being yanked back to the start line reads as a random
+    // teleport rather than as the cost of falling down a hole.
+    if (pitFallTimer > 0) {
+      ctx.textAlign = 'center';
+      ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillStyle = COLOR.bad;
+      ctx.fillText('FELL IN A PIT  -1 HEART', W / 2, 60);
+    }
+
     drawBossBar();
   }
 
@@ -4677,7 +4825,7 @@
       drawOverlayText([
         { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
-        { text: 'A/D MOVE   SPACE JUMP (HOLD=HIGHER)   S DROP   J ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
+        { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
         { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }

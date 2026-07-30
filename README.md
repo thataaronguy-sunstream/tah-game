@@ -8,7 +8,7 @@ The homestead has a farmhouse and a market stall. Harvested crops are carried,
 not auto-sold - take them to the stall to cash them in. The farmhouse door
 opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 
-**Controls:** `A`/`D` move, `Space` jump (tap for a short hop, hold for the full arc), `J` attack, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
+**Controls:** `A`/`D` move, `W` jump (tap for a short hop, hold for the full arc), `Space` attack, `S` drop through a branch, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
 
 ## The loop
 
@@ -22,6 +22,8 @@ opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 - **Kills drop food you have to collect.** Boars leave rashers of bacon, crows leave a roast chicken in a poof of black feathers. Score is paid for the kill, corn for picking the meat up — and dropped meat never falls out of the level; anything landing over a gap is placed on the nearest ground.
 - **Catch a bird from underneath** with the fork and it's skewered outright, whatever its health. The overhead swing reaches above your head, so a well-timed upward jab beats trading hits with a diving vulture.
 - **Stomping works.** Landing on an enemy from above deals a hit and bounces you off: two stomps for a boar, one for a crow. The scarecrow is too big to vault off.
+- **Hits shove.** Every blow carries knockback, both ways. A struck boar is thrown about 16px and a crow is batted back through the air rather than dropping; the slam throws hardest at 26px. Bosses only flinch a few pixels, and briefly enough that swinging can't hold one in permanent stagger. Taking a hit yourself shoves you clear of what hit you, and your own movement keys are suspended for a moment so the shove actually lands.
+- **A pit costs a heart, not the run.** Falling out of the level drops you back on the same stage's start line one heart down, and the field comes back with you, so its corn and score are rolled back too. Fall with your last heart and that's the run.
 - **Animals sometimes drop a heart.** Roughly one kill in five leaves one. It restores a point of health, or cashes out as a chunk of score plus a corn if you're already at full health.
 - **Boars that fall in water** paddle at the surface until they drown, and still drop bacon.
 - **Apple trees are a skill climb.** Trees run up to four tiers of narrow branches on alternating sides of the trunk; every step is inside a single jump, but the perches are only 12-18px wide. An apple crowns the tallest ones, worth ten corn, and a vulture is posted on it that dives when you get close.

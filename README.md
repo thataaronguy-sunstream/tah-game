@@ -8,7 +8,9 @@ The homestead has a farmhouse and a market stall. Harvested crops are carried,
 not auto-sold - take them to the stall to cash them in. The farmhouse door
 opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 
-**Controls:** `A`/`D` move, `W` jump (tap for a short hop, hold for the full arc), `Space` attack, `S` drop through a branch, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
+**Controls** (defaults, all rebindable): `A`/`D` move, `W` jump (tap for a short hop, hold for the full arc), `Space` attack, `S` drop through a branch, `Shift` dodge-roll (i-frames), `F` mount/dismount the combine (once unlocked), `1`/`2`/`3` choose an upgrade, `H` open the Farmstead.
+
+Press `C` on the title screen to remap any of the seven play actions. Arrows choose a row, `Enter` starts a capture, the next key you press takes it. Taking a key another action owns swaps the two rather than leaving a duplicate, so nothing can end up unreachable. `Enter` and `Escape` are reserved for menus and can't be bound, which is what stops you locking yourself out of the screen you'd need to undo it. Bindings persist in localStorage and every on-screen hint is generated from them, so the help text can't drift from what the keys do.
 
 ## The loop
 

@@ -1470,10 +1470,10 @@
   function updateFarm(dt) {
     if (farmToastTimer > 0) farmToastTimer -= dt;
     var mx = 0, my = 0;
-    if (keys.KeyA) mx -= 1;
-    if (keys.KeyD) mx += 1;
-    if (keys.KeyW) my -= 1;
-    if (keys.KeyS) my += 1;
+    if (pressed('left')) mx -= 1;
+    if (pressed('right')) mx += 1;
+    if (pressed('jump')) my -= 1;
+    if (pressed('drop')) my += 1;
     if (mx || my) {
       var len = Math.hypot(mx, my) || 1;
       farmer.x += (mx / len) * FARM_MOVE * dt;
@@ -1766,37 +1766,205 @@
       ctx.fillText(farmToast, W / 2, H - 13);
     }
     ctx.fillStyle = COLOR.dim;
-    ctx.fillText('WASD MOVE   SPACE WORK/SELL/ENTER   ENTER LEAVE', W / 2, H - 4);
+    // Up/left/down/right order, so the default binding still reads as WASD.
+    ctx.fillText(keyLabel(binds.jump) + keyLabel(binds.left) + keyLabel(binds.drop) +
+      keyLabel(binds.right) + ' MOVE   ' + keyLabel(binds.attack) +
+      ' WORK/SELL/ENTER   ENTER LEAVE', W / 2, H - 4);
   }
 
   // ---------------------------------------------------------------- input --
   var keys = {};
-  var TRACKED = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'ShiftLeft', 'ShiftRight',
-    'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Enter', 'Escape'];
+  // ---------------------------------------------------------- key bindings --
+  // Every in-play action reads its key from here rather than hardcoding a code,
+  // so the controls screen can remap any of them. Enter and Escape are reserved
+  // and unbindable: they drive the menus, and handing them out would let you
+  // lock yourself out of the very screen you'd need to undo it.
+  var BIND_ACTIONS = [
+    { id: 'left', name: 'MOVE LEFT', def: 'KeyA' },
+    { id: 'right', name: 'MOVE RIGHT', def: 'KeyD' },
+    { id: 'jump', name: 'JUMP', def: 'KeyW' },
+    { id: 'attack', name: 'ATTACK', def: 'Space' },
+    { id: 'drop', name: 'DROP THROUGH', def: 'KeyS' },
+    { id: 'roll', name: 'DODGE ROLL', def: 'ShiftLeft' },
+    { id: 'combine', name: 'COMBINE', def: 'KeyF' }
+  ];
+  var BIND_KEY = 'tah-game-binds';
+  var RESERVED_CODES = ['Enter', 'Escape'];
+  var binds = null;
+
+  function defaultBinds() {
+    var b = {};
+    for (var i = 0; i < BIND_ACTIONS.length; i++) b[BIND_ACTIONS[i].id] = BIND_ACTIONS[i].def;
+    return b;
+  }
+
+  function loadBinds() {
+    var b = defaultBinds();
+    try {
+      var raw = localStorage.getItem(BIND_KEY);
+      if (!raw) return b;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return b;
+      for (var i = 0; i < BIND_ACTIONS.length; i++) {
+        var id = BIND_ACTIONS[i].id;
+        var code = parsed[id];
+        // Only accept a saved code that's a real string and not reserved, so a
+        // hand-edited or stale save can't leave an action unusable.
+        if (typeof code === 'string' && code && RESERVED_CODES.indexOf(code) === -1) {
+          b[id] = code;
+        }
+      }
+    } catch (err) { /* fall back to defaults */ }
+    return b;
+  }
+
+  function saveBinds() {
+    try { localStorage.setItem(BIND_KEY, JSON.stringify(binds)); } catch (err) { /* ignore */ }
+  }
+
+  binds = loadBinds();
+
+  // Shift, Control and Alt come in pairs. Binding one and having the other do
+  // nothing feels broken, so the sides are treated as the same key.
+  function sideless(code) {
+    return code.replace(/^(Shift|Control|Alt|Meta)(Left|Right)$/, '$1');
+  }
+  function codeMatches(code, bound) {
+    return code === bound || sideless(code) === sideless(bound);
+  }
+  function pressed(action) {
+    var bound = binds[action];
+    if (keys[bound]) return true;
+    // Held-state lookup has to honour the same pairing as the event match.
+    var base = sideless(bound);
+    if (base !== bound) return !!(keys[base + 'Left'] || keys[base + 'Right']);
+    return false;
+  }
+
+  // Human-readable label for a key code.
+  function keyLabel(code) {
+    if (!code) return '--';
+    if (code === 'Space') return 'SPACE';
+    if (code.indexOf('Key') === 0) return code.slice(3);
+    if (code.indexOf('Digit') === 0) return code.slice(5);
+    if (code.indexOf('Numpad') === 0) return 'NUM ' + code.slice(6);
+    if (code.indexOf('Arrow') === 0) return code.slice(5).toUpperCase();
+    var pair = code.match(/^(Shift|Control|Alt|Meta)(Left|Right)$/);
+    if (pair) return (pair[2] === 'Left' ? 'L-' : 'R-') + pair[1].toUpperCase();
+    var named = {
+      Tab: 'TAB', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[',
+      BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'",
+      Comma: ',', Period: '.', Slash: '/', CapsLock: 'CAPS', Backspace: 'BKSP'
+    };
+    return named[code] || code.toUpperCase();
+  }
+
+  function TRACKED_CODES() {
+    var t = ['Digit1', 'Digit2', 'Digit3', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown'];
+    for (var i = 0; i < BIND_ACTIONS.length; i++) {
+      var c = binds[BIND_ACTIONS[i].id];
+      if (t.indexOf(c) === -1) t.push(c);
+      // Track both sides of a paired modifier so either one registers.
+      var base = sideless(c);
+      if (base !== c) { t.push(base + 'Left'); t.push(base + 'Right'); }
+    }
+    return t;
+  }
   var jumpQueued = false, attackQueued = false, rollQueued = false, formQueued = false;
   var dropQueued = false;
 
+  // Controls screen. The last row is the reset, so the whole screen is driven by
+  // arrows plus Enter and Escape and never needs a letter shortcut that might
+  // itself be rebound.
+  var controlsIndex = 0;
+  var capturing = false;
+  var controlsMsg = '';
+
+  function controlsRowCount() { return BIND_ACTIONS.length + 1; }
+
+  function handleControlsKey(code) {
+    if (capturing) {
+      if (code === 'Escape') { capturing = false; controlsMsg = 'CANCELLED'; return; }
+      if (RESERVED_CODES.indexOf(code) !== -1) {
+        controlsMsg = keyLabel(code) + ' IS RESERVED FOR MENUS';
+        return;
+      }
+      var action = BIND_ACTIONS[controlsIndex].id;
+      // If another action already owns this key, trade rather than leaving a
+      // duplicate: two actions on one key means one of them is unreachable.
+      var swappedWith = '';
+      for (var i = 0; i < BIND_ACTIONS.length; i++) {
+        var other = BIND_ACTIONS[i].id;
+        if (other !== action && codeMatches(code, binds[other])) {
+          binds[other] = binds[action];
+          swappedWith = BIND_ACTIONS[i].name;
+          break;
+        }
+      }
+      controlsMsg = swappedWith
+        ? 'SWAPPED WITH ' + swappedWith
+        : BIND_ACTIONS[controlsIndex].name + ' SET';
+      binds[action] = code;
+      capturing = false;
+      saveBinds();
+      audio.upgradePick();
+      return;
+    }
+
+    if (code === 'Escape') { state = 'title'; controlsMsg = ''; return; }
+    if (code === 'ArrowUp') {
+      controlsIndex = (controlsIndex + controlsRowCount() - 1) % controlsRowCount();
+      controlsMsg = '';
+      return;
+    }
+    if (code === 'ArrowDown') {
+      controlsIndex = (controlsIndex + 1) % controlsRowCount();
+      controlsMsg = '';
+      return;
+    }
+    if (code === 'Enter') {
+      if (controlsIndex === BIND_ACTIONS.length) {
+        binds = defaultBinds();
+        saveBinds();
+        controlsMsg = 'DEFAULTS RESTORED';
+      } else {
+        capturing = true;
+        controlsMsg = '';
+      }
+    }
+  }
+
   window.addEventListener('keydown', function (e) {
     audio.unlock();
-    if (TRACKED.indexOf(e.code) !== -1) e.preventDefault();
+    if (TRACKED_CODES().indexOf(e.code) !== -1) e.preventDefault();
     keys[e.code] = true;
     if (e.repeat) return;
 
-    // Only queue actions while actually playing. Space doubles as the confirm
-    // key on menus and in the homestead, so queueing it anywhere else left a
-    // jump buffered that fired the instant a run started.
+    // The rebind capture has to run before anything else, or the key being
+    // assigned would also fire whatever it's currently bound to.
+    if (state === 'controls') {
+      handleControlsKey(e.code);
+      return;
+    }
+
+    // Only queue actions while actually playing. The attack key doubles as the
+    // confirm key on menus and in the homestead, so queueing it anywhere else
+    // left an action buffered that fired the instant a run started.
     if (state === 'playing') {
-      if (e.code === 'KeyW') jumpQueued = true;
-      if (e.code === 'KeyS') dropQueued = true;
-      if (e.code === 'Space') attackQueued = true;
-      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') rollQueued = true;
-      if (e.code === 'KeyF') formQueued = true;
+      if (codeMatches(e.code, binds.jump)) jumpQueued = true;
+      if (codeMatches(e.code, binds.drop)) dropQueued = true;
+      if (codeMatches(e.code, binds.attack)) attackQueued = true;
+      if (codeMatches(e.code, binds.roll)) rollQueued = true;
+      if (codeMatches(e.code, binds.combine)) formQueued = true;
     }
 
     if (state === 'title') {
       if (e.code === 'KeyH') { treeIndex = 0; svenMode = false; state = 'hub'; }
+      else if (e.code === 'KeyC') { controlsIndex = 0; capturing = false; state = 'controls'; }
       // Undocumented on purpose: F still jumps straight to the homestead for
       // testing, it's just no longer advertised on the title screen. Keep it.
+      // Still F regardless of the combine binding: this only fires on the title
+      // screen, where the in-play bindings aren't live, so they can't collide.
       else if (e.code === 'KeyF') enterFarm();
       else startRun();
       return;
@@ -1815,7 +1983,9 @@
       return;
     }
     if (state === 'farm') {
-      if (e.code === 'Space') farmAction();
+      // The work key follows the attack binding, so the homestead doesn't
+      // contradict whatever you set on the controls screen.
+      if (codeMatches(e.code, binds.attack)) farmAction();
       else if (e.code === 'Enter' || e.code === 'Escape') { saveFarm(); state = 'title'; }
       return;
     }
@@ -2010,12 +2180,12 @@
       // read as nothing but a flash.
       player.knockback -= dt;
       player.vx *= Math.max(0, 1 - KNOCKBACK_DRAG * dt);
-      if (keys.KeyA) player.facing = -1;
-      if (keys.KeyD) player.facing = 1;
+      if (pressed('left')) player.facing = -1;
+      if (pressed('right')) player.facing = 1;
     } else {
       var move = 0;
-      if (keys.KeyA) { move -= 1; player.facing = -1; }
-      if (keys.KeyD) { move += 1; player.facing = 1; }
+      if (pressed('left')) { move -= 1; player.facing = -1; }
+      if (pressed('right')) { move += 1; player.facing = 1; }
       var baseSpeed = combineActive ? COMBINE_MOVE_SPEED : MOVE_SPEED;
       player.vx = move * baseSpeed * (player.swimming ? SWIM_SPEED_MUL : 1);
     }
@@ -2051,7 +2221,7 @@
     jumpQueued = false;
 
     // Cut the ascent once per jump, on the frame the key comes up.
-    if (!player.jumpCut && player.vy < 0 && !keys.KeyW) {
+    if (!player.jumpCut && player.vy < 0 && !pressed('jump')) {
       player.vy *= JUMP_CUT_MULT;
       player.jumpCut = true;
     }
@@ -4859,6 +5029,62 @@
     }
   }
 
+  function controlsHintLine() {
+    return keyLabel(binds.left) + '/' + keyLabel(binds.right) + ' MOVE   ' +
+      keyLabel(binds.jump) + ' JUMP (HOLD=HIGHER)   ' +
+      keyLabel(binds.drop) + ' DROP   ' +
+      keyLabel(binds.attack) + ' ATTACK   ' +
+      keyLabel(binds.roll) + ' ROLL';
+  }
+
+  function drawControlsScreen() {
+    ctx.fillStyle = 'rgba(20,16,12,0.72)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = COLOR.title;
+    ctx.fillText('CONTROLS', W / 2, 22);
+
+    var rowH = 14, top = 40, labelX = 96, keyX = 224;
+    for (var i = 0; i < BIND_ACTIONS.length; i++) {
+      var y = top + i * rowH;
+      var sel = controlsIndex === i;
+      if (sel) {
+        ctx.fillStyle = COLOR.cardSel;
+        ctx.globalAlpha = 0.22;
+        ctx.fillRect(labelX - 12, y - 8, keyX - labelX + 76, rowH - 2);
+        ctx.globalAlpha = 1;
+      }
+      ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = sel ? COLOR.cardSel : COLOR.hud;
+      ctx.fillText(BIND_ACTIONS[i].name, labelX, y);
+
+      ctx.textAlign = 'right';
+      // While capturing, the row being changed shows a prompt instead of the old
+      // key, so it's obvious the next press is going somewhere.
+      var showing = (sel && capturing) ? 'PRESS A KEY' : keyLabel(binds[BIND_ACTIONS[i].id]);
+      ctx.fillStyle = (sel && capturing) ? COLOR.bad : (sel ? COLOR.cardSel : COLOR.dim);
+      ctx.fillText(showing, keyX + 64, y);
+    }
+
+    var resetY = top + BIND_ACTIONS.length * rowH + 6;
+    var resetSel = controlsIndex === BIND_ACTIONS.length;
+    ctx.textAlign = 'center';
+    ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillStyle = resetSel ? COLOR.cardSel : COLOR.dim;
+    ctx.fillText('RESET TO DEFAULTS', W / 2, resetY);
+
+    ctx.font = '6px ui-monospace, Menlo, Consolas, monospace';
+    if (controlsMsg) {
+      ctx.fillStyle = COLOR.good;
+      ctx.fillText(controlsMsg, W / 2, resetY + 13);
+    }
+    ctx.fillStyle = COLOR.dim;
+    ctx.fillText('UP/DOWN CHOOSE   ENTER REBIND   ESC BACK', W / 2, H - 6);
+  }
+
   function drawUpgradeScreen() {
     ctx.fillStyle = 'rgba(20,16,12,0.55)';
     ctx.fillRect(0, 0, W, H);
@@ -5049,11 +5275,15 @@
       drawOverlayText([
         { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
-        { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
+        // Built from the live bindings, so the hint can never drift from what
+        // the keys actually do.
+        { text: controlsHintLine(), size: 6, color: COLOR.dim },
         { text: 'BEST FIELD ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
-        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }
+        { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD     C: CONTROLS' : '', size: 7 }
       ]);
+    } else if (state === 'controls') {
+      drawControlsScreen();
     } else if (state === 'hub') {
       drawHub();
     } else if (state === 'upgrade') {

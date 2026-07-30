@@ -560,7 +560,10 @@
     // 3 pitchfork hits, or a slam plus one. Tanky enough to be a fight,
     // short enough that you're not chasing it round the tree all day.
     vulture: { w: 17, h: 13, hp: 3, speed: 26, diveSpeed: 112, detect: 130 },
-    scarecrow: { w: 16, h: 22, hp: 12, speed: 0, detect: 0 },
+    // Three phases, so he needs the health to actually reach them. At 12 hp a
+    // player who just held the attack key finished him in 3.2s and never saw
+    // the scatter or the spin at all.
+    scarecrow: { w: 16, h: 22, hp: 34, speed: 0, detect: 0 },
     // The bull paces, paws the ground, then charges the full arena. If it hits
     // a wall it recoils, shakes it off and lines up another run - that reset
     // is the whole fight.
@@ -592,15 +595,44 @@
   var BOAR_DROWN_TIME = 2.6;
   var BOAR_PADDLE_SPEED = 14;
 
-  var BOSS_CROW_CAP = 20;
-  var BOSS_CROW_CONCURRENT_CAP = 5;
+  // The old scarecrow fight was one melee swing plus a crow every 1.8s up to
+  // twenty of them, on a timer that ran independently of his attacks. That is
+  // what made it spam: the chaff was continuous, it overlapped his swings, and
+  // he had a single 30px attack so standing at 31px made him harmless. Now the
+  // crows arrive in telegraphed clutches from the same state machine as his
+  // attacks - he cannot summon and swing at once - and he has an answer to
+  // every distance.
+  var BOSS_CROW_CAP = 9;                  // was 20
+  var BOSS_CROW_CONCURRENT_CAP = 4;       // was 5
+  var BOSS_CROW_CLUTCH = 3;               // they arrive together, as an event
+  var BOSS_SUMMON_TELL = 0.8;             // arms raised and audible first
+  var BOSS_SUMMON_CYCLE = 7.5;            // and only when the field is thinning
+  var BOSS_SUMMON_CLEAR = 2;              // won't top up above this many alive
   var BOSS_AGGRO_RANGE = 100;
-  var BOSS_SPAWN_INTERVAL = 1.8;
-  var BOSS_MELEE_RANGE = 30;
-  var BOSS_ATTACK_WINDUP = 0.4;
+  var BOSS_MELEE_RANGE = 34;
+  var BOSS_ATTACK_WINDUP = 0.5;           // longer tell, was 0.4
   var BOSS_ATTACK_ACTIVE = 0.15;
   var BOSS_ATTACK_COOLDOWN = 1.1;
-  var BOSS_ATTACK_REACH = 14;
+  var BOSS_ATTACK_REACH = 18;             // was 14
+  var BOSS_LUNGE = 90;                    // the sweep closes, so backing off isn't free
+
+  // Straw darts, the answer to standing outside melee range. They arc, so they
+  // can be jumped or rolled through rather than being an unavoidable tax.
+  var BOSS_SCATTER_TELL = 0.62;
+  var BOSS_SCATTER_COUNT = 3;
+  var BOSS_SCATTER_SPEED = 96;
+  var BOSS_SCATTER_RANGE = 132;
+  var SHOT_W = 4, SHOT_H = 2;
+
+  // Phase 3 only: a wide spin that hits both sides, so hugging his back is not
+  // a free ride either.
+  var BOSS_SPIN_TELL = 0.78;
+  var BOSS_SPIN_ACTIVE = 0.45;
+  var BOSS_SPIN_REACH = 26;
+
+  var BOSS_PHASE2 = 0.66, BOSS_PHASE3 = 0.33;
+  var BOSS_WALK_SPEED = 17;               // phase 3: he comes off the post
+  var BOSS_WALK_LEASH = 64;               // but stays in his arena
 
   // ------------------------------------------------------- meta progression -
   var TREE = [
@@ -745,6 +777,7 @@
   var player = null;
   var enemies = [];
   var particles = [];
+  var bossShots = [];
   var drops = [];
   var corns = [];
   var platforms = [];
@@ -812,10 +845,14 @@
     e.hp = Math.round(ENEMY_DEFS[type].hp * (1 + 0.35 * Math.max(0, tier - 1)));
     e.maxHp = e.hp;
     e.crowSpawnCount = 0;
-    e.spawnTimer = BOSS_SPAWN_INTERVAL;
     e.atkState = 'idle';
+    e.atkKind = 'sweep';
     e.atkTimer = 0;
     e.atkHit = false;
+    // Scarecrow: the first clutch is available immediately, and the spin
+    // alternates with the sweep once he's in his last third.
+    e.summonCooldown = 0;
+    e.spinNext = false;
     // Bull-specific: charge state machine and the lane it runs along.
     e.mode = 'paw';
     e.modeTimer = BULL_PAW_TIME;
@@ -929,6 +966,7 @@
     corns = [];
     enemies = [];
     particles = [];
+    bossShots = [];
     drops = [];
 
     hasBoss = isBossDepth(depth);
@@ -2794,54 +2832,193 @@
         audio.bossSwing();
       }
     } else if (e.type === 'scarecrow') {
-      e.facing = player.x > e.x ? 1 : -1;
+      var scMax = e.maxHp || ENEMY_DEFS.scarecrow.hp;
+      var frac = e.hp / scMax;
+      var phase = frac > BOSS_PHASE2 ? 1 : (frac > BOSS_PHASE3 ? 2 : 3);
+      // Cooldowns tighten as he loses straw, so late phases press harder without
+      // ever running two things at once.
+      var cdMul = phase === 1 ? 1 : (phase === 2 ? 0.82 : 0.64);
+      var dist = Math.abs((player.x + player.w / 2) - (e.x + e.w / 2));
+      var engaged = dist < BOSS_AGGRO_RANGE;
+      if (e.atkState !== 'strike') e.facing = player.x > e.x ? 1 : -1;
+      if (e.summonCooldown > 0) e.summonCooldown -= dt;
 
-      if (Math.abs(player.x - e.x) < BOSS_AGGRO_RANGE) {
-        e.spawnTimer -= dt;
-        if (e.spawnTimer <= 0 && e.crowSpawnCount < BOSS_CROW_CAP) {
-          var alive = 0;
-          for (var k = 0; k < enemies.length; k++) {
-            if (enemies[k].bossSpawned && !enemies[k].dead) alive++;
-          }
-          if (alive < BOSS_CROW_CONCURRENT_CAP) {
-            var nc = makeEnemy('crow', e.x + (Math.random() - 0.5) * 24, e.y - 20 - Math.random() * 20);
-            nc.bossSpawned = true;
-            enemies.push(nc);
-            e.crowSpawnCount++;
-          }
-          e.spawnTimer = BOSS_SPAWN_INTERVAL;
-        }
-      }
-
-      var meleeDist = Math.abs(player.x - (e.x + e.w / 2));
       if (e.atkState === 'idle') {
-        if (meleeDist < BOSS_MELEE_RANGE) { e.atkState = 'windup'; e.atkTimer = BOSS_ATTACK_WINDUP; }
+        // Phase 3 he pulls off the post and walks you down, leashed to his
+        // arena so he can't be kited into the level behind him.
+        if (phase === 3 && engaged && Math.abs(e.x - e.spawnX) < BOSS_WALK_LEASH) {
+          e.vx = e.facing * BOSS_WALK_SPEED;
+        } else {
+          e.vx = 0;
+        }
+
+        var aliveCrows = 0;
+        for (var k = 0; k < enemies.length; k++) {
+          if (enemies[k].bossSpawned && !enemies[k].dead) aliveCrows++;
+        }
+        var wantsCrows = engaged && e.summonCooldown <= 0 &&
+          aliveCrows <= BOSS_SUMMON_CLEAR && e.crowSpawnCount < BOSS_CROW_CAP;
+
+        if (dist < BOSS_MELEE_RANGE) {
+          // Up close he always answers, and in phase 3 alternates in the spin.
+          if (phase === 3 && e.spinNext) {
+            e.atkState = 'windup'; e.atkKind = 'spin'; e.atkTimer = BOSS_SPIN_TELL;
+            e.spinNext = false;
+          } else {
+            e.atkState = 'windup'; e.atkKind = 'sweep'; e.atkTimer = BOSS_ATTACK_WINDUP;
+            e.spinNext = true;
+          }
+        } else if (wantsCrows) {
+          e.atkState = 'windup'; e.atkKind = 'summon'; e.atkTimer = BOSS_SUMMON_TELL;
+        } else if (dist < BOSS_SCATTER_RANGE) {
+          // Deliberately reaches further than his aggro range: he plinks at you
+          // on the approach, so there's no comfortable spot to stand and wait.
+          // Available from the first phase on purpose. Gating it behind phase 2
+          // meant the attack that punishes standing off couldn't fire until you
+          // had already closed in and damaged him, so turtling still won.
+          e.atkState = 'windup'; e.atkKind = 'scatter'; e.atkTimer = BOSS_SCATTER_TELL;
+        }
       } else if (e.atkState === 'windup') {
+        e.vx = 0;
         e.atkTimer -= dt;
         if (e.atkTimer <= 0) {
-          e.atkState = 'strike';
-          e.atkTimer = BOSS_ATTACK_ACTIVE;
           e.atkHit = false;
-          audio.bossSwing();
+          if (e.atkKind === 'summon') {
+            var placed = 0;
+            for (var cw = 0; cw < BOSS_CROW_CLUTCH; cw++) {
+              var liveNow = 0;
+              for (var m = 0; m < enemies.length; m++) {
+                if (enemies[m].bossSpawned && !enemies[m].dead) liveNow++;
+              }
+              if (liveNow >= BOSS_CROW_CONCURRENT_CAP) break;
+              if (e.crowSpawnCount >= BOSS_CROW_CAP) break;
+              var nc = makeEnemy('crow', e.x + (cw - 1) * 14, e.y - 18 - cw * 7);
+              nc.bossSpawned = true;
+              enemies.push(nc);
+              e.crowSpawnCount++;
+              placed++;
+            }
+            audio.bossSwing();
+            e.summonCooldown = BOSS_SUMMON_CYCLE;
+            e.atkState = 'cooldown';
+            e.atkTimer = BOSS_ATTACK_COOLDOWN * 0.7 * cdMul;
+          } else if (e.atkKind === 'scatter') {
+            fireScatter(e, phase);
+            e.atkState = 'cooldown';
+            e.atkTimer = BOSS_ATTACK_COOLDOWN * cdMul;
+          } else if (e.atkKind === 'spin') {
+            e.atkState = 'strike';
+            e.atkTimer = BOSS_SPIN_ACTIVE;
+            audio.bossSwing();
+          } else {
+            e.atkState = 'strike';
+            e.atkTimer = BOSS_ATTACK_ACTIVE;
+            // The sweep carries him forward, which is what stops the fight
+            // being won by standing one pixel outside his reach.
+            e.vx = e.facing * BOSS_LUNGE;
+            audio.bossSwing();
+          }
         }
       } else if (e.atkState === 'strike') {
         e.atkTimer -= dt;
+        var spinning = e.atkKind === 'spin';
+        if (spinning) e.vx = 0;
         if (!e.atkHit) {
-          var bx = e.facing > 0 ? e.x : e.x - BOSS_ATTACK_REACH;
-          var bw = e.w + BOSS_ATTACK_REACH;
+          var reach = spinning ? BOSS_SPIN_REACH : BOSS_ATTACK_REACH;
+          // The spin reaches both ways; the sweep only where he's facing.
+          var bx = spinning ? e.x - reach : (e.facing > 0 ? e.x : e.x - reach);
+          var bw = spinning ? e.w + reach * 2 : e.w + reach;
           if (aabbOverlap(bx, e.y, bw, e.h, player.x, player.y, player.w, player.h) &&
             player.hitInvuln <= 0 && player.rolling <= 0) {
             player.hp -= 1;
             player.hitInvuln = PLAYER_HIT_INVULN;
+            player.vx = (player.x < e.x ? -1 : 1) * PLAYER_KNOCKBACK_VX;
+            player.vy = PLAYER_KNOCKBACK_VY;
+            player.knockback = PLAYER_KNOCKBACK_TIME;
             audio.hitPlayer();
             e.atkHit = true;
           }
         }
-        if (e.atkTimer <= 0) { e.atkState = 'cooldown'; e.atkTimer = BOSS_ATTACK_COOLDOWN; }
+        if (e.atkTimer <= 0) {
+          e.vx = 0;
+          e.atkState = 'cooldown';
+          e.atkTimer = (spinning ? BOSS_ATTACK_COOLDOWN * 1.15 : BOSS_ATTACK_COOLDOWN) * cdMul;
+        }
       } else if (e.atkState === 'cooldown') {
+        e.vx = 0;
         e.atkTimer -= dt;
         if (e.atkTimer <= 0) e.atkState = 'idle';
       }
+
+      // He is integrated like anything else now that he can move, so the lunge
+      // and the phase-3 walk resolve against the ground and the arena edges.
+      updateGrounded(e, dt, plats);
+      e.x = Math.max(e.spawnX - BOSS_WALK_LEASH, Math.min(e.spawnX + BOSS_WALK_LEASH, e.x));
+    }
+  }
+
+  // A fan of straw darts. They arc under light gravity so they read as thrown
+  // straw rather than bullets, and so a jump or a roll beats them.
+  function fireScatter(e, phase) {
+    var cx = e.x + e.w / 2, cy = e.y + 9;
+    // A wider fan once he's past his first third, so the same attack gets
+    // harder to slip between rather than being replaced by a new one.
+    var count = phase >= 2 ? BOSS_SCATTER_COUNT + 1 : BOSS_SCATTER_COUNT;
+    for (var i = 0; i < count; i++) {
+      var spread = (i - (count - 1) / 2) * 0.3;
+      bossShots.push({
+        x: cx, y: cy, w: SHOT_W, h: SHOT_H,
+        vx: e.facing * BOSS_SCATTER_SPEED * Math.cos(spread),
+        vy: BOSS_SCATTER_SPEED * Math.sin(spread) - 22,
+        angle: 0, life: 2.4
+      });
+    }
+    audio.bossSwing();
+  }
+
+  function updateBossShots(dt) {
+    for (var i = bossShots.length - 1; i >= 0; i--) {
+      var s = bossShots[i];
+      s.vy += 150 * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.angle = Math.atan2(s.vy, s.vx);
+      s.life -= dt;
+
+      var spent = s.life <= 0 || s.y + s.h > GROUND_Y + 2 || s.x < 0 || s.x > levelWidth;
+      if (!spent && player.hitInvuln <= 0 && player.rolling <= 0 &&
+        aabbOverlap(s.x, s.y, s.w, s.h, player.x, player.y, player.w, player.h)) {
+        player.hp -= 1;
+        player.hitInvuln = PLAYER_HIT_INVULN;
+        player.vx = (player.x < s.x ? -1 : 1) * PLAYER_KNOCKBACK_VX;
+        player.vy = PLAYER_KNOCKBACK_VY;
+        player.knockback = PLAYER_KNOCKBACK_TIME;
+        audio.hitPlayer();
+        spent = true;
+      }
+      if (spent) bossShots.splice(i, 1);
+    }
+  }
+
+  function drawBossShots() {
+    for (var i = 0; i < bossShots.length; i++) {
+      var s = bossShots[i];
+      ctx.save();
+      ctx.translate(s.x + s.w / 2, s.y + s.h / 2);
+      ctx.rotate(s.angle);
+      ctx.strokeStyle = COLOR.outline;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-s.w / 2 - 0.5, 0);
+      ctx.lineTo(s.w / 2 + 0.5, 0);
+      ctx.stroke();
+      ctx.strokeStyle = COLOR.straw;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(-s.w / 2, 0);
+      ctx.lineTo(s.w / 2, 0);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -2905,6 +3082,9 @@
     // Kills feed the same score gate the pickups do.
     if (maybeOfferUpgrade()) return;
     checkEnemyContact();
+    // Death from a dart is picked up by updatePlayer next frame, the same way
+    // contact damage already is.
+    updateBossShots(dt);
     updateDrops(dt);
 
     cameraX = Math.max(0, Math.min(Math.max(0, levelWidth - W), player.x + player.w / 2 - W / 2));
@@ -4256,9 +4436,52 @@
       var sx = e.x, sy = e.y, sw = e.w, sh = e.h;
       var scx = sx + sw / 2;
 
+      // Each tell has its own length now, so the pose has to be normalised
+      // against the duration of the attack actually being wound up. Dividing
+      // everything by BOSS_ATTACK_WINDUP made the longer tells run past the end
+      // of the arc and swing the arm the wrong way.
+      var kind = e.atkKind || 'sweep';
+      var tellLen = kind === 'summon' ? BOSS_SUMMON_TELL
+                  : kind === 'scatter' ? BOSS_SCATTER_TELL
+                  : kind === 'spin' ? BOSS_SPIN_TELL
+                  : BOSS_ATTACK_WINDUP;
+      var strikeLen = kind === 'spin' ? BOSS_SPIN_ACTIVE : BOSS_ATTACK_ACTIVE;
       var armAngle = 0;
-      if (e.atkState === 'windup') armAngle = -0.7 * (1 - e.atkTimer / BOSS_ATTACK_WINDUP);
-      else if (e.atkState === 'strike') armAngle = -0.7 + 1.3 * (1 - e.atkTimer / BOSS_ATTACK_ACTIVE);
+      if (e.atkState === 'windup') {
+        var wt = Math.max(0, Math.min(1, 1 - e.atkTimer / tellLen));
+        if (kind === 'summon') {
+          // Both arms straight up, held high: the unmistakable "here come the
+          // crows" pose, and the only tell that doesn't end in a swing.
+          armAngle = -1.35 * wt;
+        } else if (kind === 'scatter') {
+          armAngle = -0.5 * wt;
+        } else if (kind === 'spin') {
+          armAngle = -1.1 * wt;
+        } else {
+          armAngle = -0.7 * wt;
+        }
+      } else if (e.atkState === 'strike') {
+        var st2 = Math.max(0, Math.min(1, 1 - e.atkTimer / strikeLen));
+        if (kind === 'spin') {
+          // A full rotation, so it reads as sweeping all the way around.
+          armAngle = -1.1 + Math.PI * 2 * st2;
+        } else {
+          armAngle = -0.7 + 1.3 * st2;
+        }
+      }
+
+      // The wound-up spin gets a faint ring so its reach is legible before it
+      // lands, since it's the one attack that hits behind him too.
+      if (e.atkState === 'windup' && kind === 'spin') {
+        ctx.save();
+        ctx.globalAlpha = 0.18 + 0.22 * Math.max(0, Math.min(1, 1 - e.atkTimer / BOSS_SPIN_TELL));
+        ctx.strokeStyle = COLOR.bad;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(scx, sy + sh / 2, sw / 2 + BOSS_SPIN_REACH, sh / 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
 
       if (e.atkState === 'strike') {
         ctx.save();
@@ -4585,7 +4808,7 @@
     ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.hud;
     ctx.textAlign = 'center';
-    ctx.fillText('DEPTH ' + depth, W / 2, 10);
+    ctx.fillText('FIELD ' + depth, W / 2, 10);
     ctx.textAlign = 'right';
     ctx.fillText(pad(runScore), W - 4, 10);
 
@@ -4710,7 +4933,7 @@
 
     ctx.font = '7px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillStyle = COLOR.cardBg;
-    ctx.fillText('BANKED CORN ' + meta.bankedCorn + '    BEST DEPTH ' + meta.bestDepth +
+    ctx.fillText('BANKED CORN ' + meta.bankedCorn + '    BEST FIELD ' + meta.bestDepth +
       '    BEST ' + pad(meta.bestScore), W / 2, 27);
 
     var rowH = 20, y0 = 38;
@@ -4801,6 +5024,7 @@
       drawCorn();
       drawDrops();
       for (var i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
+      drawBossShots();
       if (player && state !== 'victory' && state !== 'drowning') drawPlayer();
       if (state === 'drowning') drawDrownSeq();
       drawParticles();
@@ -4826,7 +5050,7 @@
         { text: 'FARMER BROWN', size: 16, color: COLOR.title },
         { text: '', size: 5 },
         { text: 'A/D MOVE   W JUMP (HOLD=HIGHER)   S DROP   SPACE ATTACK   SHIFT ROLL', size: 6, color: COLOR.dim },
-        { text: 'BEST DEPTH ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
+        { text: 'BEST FIELD ' + meta.bestDepth + '   BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: blink ? 'ANY KEY: RUN     H: FARMSTEAD' : '', size: 7 }
       ]);
@@ -4838,7 +5062,7 @@
       drawOverlayText([
         { text: 'FIELD CLEARED', size: 14, color: COLOR.good },
         { text: '', size: 4 },
-        { text: 'DEPTH ' + depth + ' DONE   ' + resSummary(), size: 7 },
+        { text: 'FIELD ' + depth + ' DONE   ' + resSummary(), size: 7 },
         { text: '', size: 4 },
         { text: 'ANY KEY: DESCEND', size: 7 }
       ]);
@@ -4847,7 +5071,7 @@
       drawOverlayText([
         { text: BOSS_NAMES[bossTypeFor(depth)] + ' DOWN', size: 13, color: COLOR.good },
         { text: '', size: 4 },
-        { text: 'DEPTH ' + depth + '   CARRYING ' + resSummary(), size: 7 },
+        { text: 'FIELD ' + depth + '   CARRYING ' + resSummary(), size: 7 },
         { text: 'NEXT DOWN THERE: ' + BOSS_NAMES[nextBoss], size: 6, color: COLOR.dim },
         { text: '', size: 4 },
         { text: 'ANY KEY: PUSH DEEPER', size: 7 },
@@ -4857,7 +5081,7 @@
       drawOverlayText([
         { text: 'YOU DIED', size: 16, color: COLOR.bad },
         { text: '', size: 4 },
-        { text: 'DEPTH ' + depth + '   SCORE ' + pad(runScore), size: 7 },
+        { text: 'FIELD ' + depth + '   SCORE ' + pad(runScore), size: 7 },
         { text: resSummary(), size: 6, color: COLOR.dim },
         { text: 'HAUL ' + lastHaul + '   LOST ' + lastLost + '   KEPT ' + lastBanked, size: 6, color: COLOR.bad },
         { text: 'BANKED CORN ' + meta.bankedCorn, size: 6, color: COLOR.dim },

@@ -1,6 +1,6 @@
 # tah-game
 
-**Farmer Brown** — an agriculture-themed roguelite in the Dead Cells mould. Descend five procedurally generated farm levels, harvesting corn and fighting crows, boars and a scarecrow boss that guards the barn. Corn buys run upgrades (pick 1 of 3) and banks into a permanent skill tree at the Farmstead, so each death makes the next run stronger. Rendered with vector primitives at 1280x720 over a 320x180 logical grid, procedural Web Audio music and SFX, no asset files, no build step.
+**Farmer Brown** — an agriculture-themed roguelite in the Dead Cells mould. Descend five procedurally generated fields, harvesting corn and fighting crows, boars and a scarecrow boss that guards the barn. Corn buys run upgrades (pick 1 of 3) and banks into a permanent skill tree at the Farmstead, so each death makes the next run stronger. Rendered with vector primitives at 1280x720 over a 320x180 logical grid, procedural Web Audio music and SFX, no asset files, no build step.
 
 Play: https://thataaronguy-sunstream.github.io/tah-game/
 
@@ -12,7 +12,8 @@ opens the Farmstead skill tree, so the whole loop closes on the farm itself.
 
 ## The loop
 
-- **Runs** are five levels deep. Reaching the silo clears a level; the final level swaps it for a barn you can't enter while the scarecrow lives.
+- **Runs** are five fields deep. Reaching the silo clears a field; the final one swaps it for a barn you can't enter while the scarecrow lives.
+- **The scarecrow fights in three phases** and has an answer to every distance. Close in and he sweeps, lunging forward so backing off by a pixel doesn't save you. Stand off and he throws fans of straw darts, which arc and can be jumped or rolled through. In his last third he steps off the post and walks you down, alternating the sweep with a spin that reaches behind him too. Crows still come, but in telegraphed clutches of three from the same state machine as his attacks, so he can never summon and swing at once.
 - **Corn grows on stalks,** not in trees. Occasional leaning stalks with blade leaves and a tassel, each bearing one cob at chest height so you walk through to take it. Trees carry apples; nothing else does.
 - **Three resources, not one.** Corn, bacon and chicken are tracked separately, one per pickup, shown as icons with counts. They bank at different rates (corn 1, bacon 2, chicken 3) because meat costs you a fight.
 - **Points unlock upgrade cards,** and points come from kills as well as pickups. The threshold accelerates, so cards get rarer as a run goes on rather than piling up.

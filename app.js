@@ -618,10 +618,20 @@
 
   // Straw darts, the answer to standing outside melee range. They arc, so they
   // can be jumped or rolled through rather than being an unavoidable tax.
-  var BOSS_SCATTER_TELL = 0.62;
+  //
+  // The cadence gets its own cooldown rather than borrowing the melee one. On the
+  // melee timing the volleys landed 0.51s apart in the last phase against a 0.5s
+  // dodge-roll cycle - you could finish exactly one roll before the next volley
+  // was already on you, which is no window at all. 1.7s puts nearly three roll
+  // cycles of clear air between volleys, and the phase compression is gentler so
+  // late phases press without becoming a wall.
+  var BOSS_SCATTER_TELL = 0.78;           // was 0.62: more warning
+  var BOSS_SCATTER_COOLDOWN = 1.7;
   var BOSS_SCATTER_COUNT = 3;
   var BOSS_SCATTER_SPEED = 96;
-  var BOSS_SCATTER_RANGE = 132;
+  // Was 132, but a dart only carries 28-75px before it buries itself, so he was
+  // throwing volleys from distances they could never cross.
+  var BOSS_SCATTER_RANGE = 92;
   var SHOT_W = 4, SHOT_H = 2;
 
   // Phase 3 only: a wide spin that hits both sides, so hugging his back is not
@@ -3075,7 +3085,9 @@
           } else if (e.atkKind === 'scatter') {
             fireScatter(e, phase);
             e.atkState = 'cooldown';
-            e.atkTimer = BOSS_ATTACK_COOLDOWN * cdMul;
+            // Its own cooldown, not the melee one, and only the last phase
+            // tightens it - and only slightly. See BOSS_SCATTER_COOLDOWN.
+            e.atkTimer = BOSS_SCATTER_COOLDOWN * (phase === 3 ? 0.85 : 1);
           } else if (e.atkKind === 'spin') {
             e.atkState = 'strike';
             e.atkTimer = BOSS_SPIN_ACTIVE;
@@ -3131,9 +3143,11 @@
   // straw rather than bullets, and so a jump or a roll beats them.
   function fireScatter(e, phase) {
     var cx = e.x + e.w / 2, cy = e.y + 9;
-    // A wider fan once he's past his first third, so the same attack gets
-    // harder to slip between rather than being replaced by a new one.
-    var count = phase >= 2 ? BOSS_SCATTER_COUNT + 1 : BOSS_SCATTER_COUNT;
+    // A wider fan in the last third, so the same attack gets harder to slip
+    // between rather than being replaced by a new one. This used to widen at
+    // phase 2, but he cannot scatter before phase 2 at all, so every volley in
+    // the game was the wide one and the progression never existed.
+    var count = phase >= 3 ? BOSS_SCATTER_COUNT + 1 : BOSS_SCATTER_COUNT;
     for (var i = 0; i < count; i++) {
       var spread = (i - (count - 1) / 2) * 0.3;
       bossShots.push({
